@@ -76,7 +76,8 @@ data class RoutePicking(
 )
 
 /**
- * The Route library: every course the runner keeps, and the one way into it (#54).
+ * The Route library: every course the runner keeps (#54), browsed from Open Routes or opened from the
+ * pre-run card to pick one ([RoutePicking], #496).
  *
  * Deliberately thin. Everything it prints comes from [routeRowSubtitle] and its neighbours in
  * `RouteModels.kt`, so what a runner reads is pinned by unit tests rather than by opening the screen

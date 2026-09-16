@@ -276,9 +276,29 @@ fun routeLibraryRowsNearestFirst(
     val rank = routesNearestFirst(routes, targetMeters, targetIsFixed)
         .withIndex()
         .associate { (index, route) -> route.id to index }
-    val ranked = routes.groupBy { routeFamilyKey(it) }
     return rows.sortedBy { row ->
-        val members = row.family?.let { ranked[it] } ?: listOfNotNull(row.route)
-        members.minOfOrNull { rank[it.id] ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
+        membersOf(row, routes).minOfOrNull { rank[it.id] ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
     }
 }
+
+/**
+ * Which length a picking library opens a row on (#496), or null to let the page choose as it does
+ * when browsing (the length run most recently).
+ *
+ * With a target, the row was placed by its best length ([routeLibraryRowsNearestFirst]), so it opens
+ * on that same length: on a Test day a family placed by its 5.4 km length must not open on a 3 km
+ * one the Test cannot be run on.
+ */
+fun routeLengthToOpenWhilePicking(
+    row: RouteLibraryRow,
+    routes: List<RouteHeader>,
+    targetMeters: Double?,
+    targetIsFixed: Boolean = false,
+): Long? {
+    if (targetMeters == null) return null
+    return routesNearestFirst(membersOf(row, routes), targetMeters, targetIsFixed).firstOrNull()?.id
+}
+
+/** The courses one library row stands for: a family's lengths, or the lone course. */
+private fun membersOf(row: RouteLibraryRow, routes: List<RouteHeader>): List<RouteHeader> =
+    row.family?.let { family -> routes.filter { routeFamilyKey(it) == family } } ?: listOfNotNull(row.route)

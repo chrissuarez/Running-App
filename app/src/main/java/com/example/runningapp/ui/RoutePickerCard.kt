@@ -166,9 +166,9 @@ fun RoutePickerCard(
 /**
  * How far today's session is likely to cover, said once and drawn in both places it belongs (#422).
  *
- * One composable rather than the same three lines on the card and in the dialog, because the two are
- * deliberately the same line: a runner who reads `Today ≈ 7 km` on the card and something styled
- * differently inside the dialog would take them for two different claims.
+ * One composable rather than the same three lines on the card and at the top of the picking Routes
+ * list (#496), because the two are deliberately the same line: a runner who reads `Today ≈ 7 km` on
+ * the card and something styled differently on the list would take them for two different claims.
  */
 @Composable
 internal fun RouteSuggestionHintLine(

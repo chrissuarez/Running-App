@@ -418,4 +418,24 @@ class RouteSuggestionTest {
 
         assertEquals(listOf("Loop", "Route 1"), offered.map { it.title })
     }
+
+    @Test
+    fun `a family picked towards a test opens on its best length, not its shortest`() {
+        val short = header(id = 2, distanceMeters = 3_000.0, family = "Loop")
+        val long = header(id = 3, distanceMeters = 5_400.0, family = "Loop")
+        val row = family("Loop", short, long)
+
+        assertEquals(
+            3L,
+            routeLengthToOpenWhilePicking(row, listOf(short, long), targetMeters = 5_000.0, targetIsFixed = true),
+        )
+    }
+
+    @Test
+    fun `with no target a picked family leaves its page to choose the length`() {
+        val short = header(id = 2, distanceMeters = 3_000.0, family = "Loop")
+        val long = header(id = 3, distanceMeters = 5_400.0, family = "Loop")
+
+        assertNull(routeLengthToOpenWhilePicking(family("Loop", short, long), listOf(short, long), targetMeters = null))
+    }
 }

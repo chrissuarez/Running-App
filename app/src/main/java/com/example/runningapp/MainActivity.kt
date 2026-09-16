@@ -92,6 +92,7 @@ import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutePickerCard
 import com.example.runningapp.ui.RoutePicking
+import com.example.runningapp.ui.routeLengthToOpenWhilePicking
 import com.example.runningapp.ui.routeLibraryRowsNearestFirst
 import com.example.runningapp.ui.runRouteAfterPick
 import com.example.runningapp.ui.routeSuggestionSinceMillis
@@ -1426,7 +1427,17 @@ class MainActivity : ComponentActivity() {
                                 message = routeMessage,
                                 courseToShow = courseToShow,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },
-                                onOpen = { routeId -> navigateTo(Routes.routeDetail(routeId, picking)) },
+                                onOpen = { routeId ->
+                                    // A picking row opens on the length it was placed by (#496).
+                                    val best = if (picking) {
+                                        shownRows.firstOrNull { it.openRouteId == routeId }?.let { row ->
+                                            routeLengthToOpenWhilePicking(row, routeLibrary, targetMeters, targetIsFixed)
+                                        }
+                                    } else {
+                                        null
+                                    }
+                                    navigateTo(Routes.routeDetail(best ?: routeId, picking, exact = best != null))
+                                },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
                                 onCourseShown = { ask -> routesViewModel.courseShown(ask) },
@@ -1438,10 +1449,12 @@ class MainActivity : ComponentActivity() {
                             arguments = listOf(
                                 navArgument(Routes.ARG_ROUTE_ID) { type = NavType.LongType },
                                 navArgument(Routes.ARG_PICK) { type = NavType.BoolType; defaultValue = false },
+                                navArgument(Routes.ARG_EXACT) { type = NavType.BoolType; defaultValue = false },
                             )
                         ) { backStackEntry ->
                             val routeId = backStackEntry.arguments?.getLong(Routes.ARG_ROUTE_ID)
                             val picking = backStackEntry.arguments?.getBoolean(Routes.ARG_PICK) == true
+                            val exact = backStackEntry.arguments?.getBoolean(Routes.ARG_EXACT) == true
                             // Which of the family's lengths the page is showing (#421).
                             //
                             // Held by the destination rather than by the screen, and remembered
@@ -1458,7 +1471,9 @@ class MainActivity : ComponentActivity() {
                                 // would leave the page on its opening spinner for good; settled on
                                 // the id, the page draws exactly what #420 already drew for a course
                                 // that is not there.
-                                selectedRouteId = routeId?.let { routesViewModel.landingSibling(it) ?: it }
+                                selectedRouteId = routeId?.let {
+                                    if (exact) it else routesViewModel.landingSibling(it) ?: it
+                                }
                             }
                             // Everything below follows the *chosen* length rather than the one the
                             // library row opened, which is what makes a chip switch the whole page.
@@ -2045,6 +2060,7 @@ fun MainScreen(
     // Plain arithmetic on this phone: no network, no AI coach, no consent gate (#422).
     val routeTargetMeters =
         suggestedRouteDistanceMeters(todaysWorkout, recentRuns, todaysFixedDistanceMeters)
+    val routeTargetIsFixed = todaysFixedDistanceMeters != null
 
     // Taken from the library rather than from the pick, so a course deleted while this screen sat
     // open is not the course a Run sets off on (#56) — the same rule the Workout pick keeps above.
@@ -2215,10 +2231,8 @@ fun MainScreen(
                             pickedThumbnail = pickedRouteThumbnail,
                             reversed = pickedRouteReversed,
                             targetMeters = routeTargetMeters,
-                            targetIsFixed = todaysFixedDistanceMeters != null,
-                            onChoose = {
-                                onChooseRoute(routeTargetMeters, todaysFixedDistanceMeters != null)
-                            },
+                            targetIsFixed = routeTargetIsFixed,
+                            onChoose = { onChooseRoute(routeTargetMeters, routeTargetIsFixed) },
                             onReversedChange = { reversed ->
                                 routeChoice?.let { onRouteChoiceChange(it.copy(reversed = reversed)) }
                             }

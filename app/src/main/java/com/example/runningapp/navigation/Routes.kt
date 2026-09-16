@@ -16,6 +16,9 @@ object Routes {
     /** Whether the plan stated [ARG_TARGET_METERS] rather than the phone estimating it (#422). */
     const val ARG_TARGET_FIXED = "targetFixed"
 
+    /** Open a route page on exactly the length named, rather than letting a family choose (#496). */
+    const val ARG_EXACT = "exact"
+
     const val MAIN = "main"
     const val SETTINGS = "settings"
     const val MANAGE_DEVICES = "manage_devices"
@@ -33,7 +36,7 @@ object Routes {
      * One course's own page (#420) — its map, its numbers and the Runs remembered on it, addressed
      * by the course itself.
      */
-    const val ROUTE_DETAIL = "route_detail/{$ARG_ROUTE_ID}?$ARG_PICK={$ARG_PICK}"
+    const val ROUTE_DETAIL = "route_detail/{$ARG_ROUTE_ID}?$ARG_PICK={$ARG_PICK}&$ARG_EXACT={$ARG_EXACT}"
 
     /** The Segments collection (#69) — the stretches of ground the runner has named. */
     const val SEGMENTS = "segments"
@@ -67,8 +70,8 @@ object Routes {
 
     fun segmentDetail(segmentId: Long): String = "segment_detail/$segmentId"
 
-    fun routeDetail(routeId: Long, picking: Boolean = false): String =
-        "route_detail/$routeId?$ARG_PICK=$picking"
+    fun routeDetail(routeId: Long, picking: Boolean = false, exact: Boolean = false): String =
+        "route_detail/$routeId?$ARG_PICK=$picking&$ARG_EXACT=$exact"
 
     /** The library to browse and look after — the "Open Routes" door (#54). */
     fun routeLibrary(): String = "route_library"
