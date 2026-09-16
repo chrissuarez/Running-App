@@ -2625,7 +2625,10 @@ class SessionRepositoryTest {
         val statement = launch { repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null) }
         runCurrent()
         var read = false
-        val archive = launch { repositoryWithSamples.betweenStatements { read = true } }
+        val archive = launch {
+            repositoryWithSamples.settingsBetweenStatements()
+            read = true
+        }
         runCurrent()
 
         assertFalse(read)
@@ -2633,6 +2636,22 @@ class SessionRepositoryTest {
         heldMidStatement.complete(Unit)
         listOf(statement, archive).joinAll()
         assertTrue(read)
+    }
+
+    @Test
+    fun `a read between statements refuses a statement left unlanded`() = runTest {
+        // A statement that threw, or one a dead process left for the launch replay, has released
+        // the lock with its numbers in force and history still on the old ones (#501).
+        val repository = SessionRepository(sessionDao = mockDao, settingsRepository = mockSettingsRepo)
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(StatedHeartRates(maxHr = 181, restingHr = null))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = false, historyMaxHr = 190)))
+
+        try {
+            repository.settingsBetweenStatements()
+            fail("read a statement that never landed")
+        } catch (expected: IllegalStateException) {
+        }
     }
 
     // --- What the coach may prescribe (#113) ---
