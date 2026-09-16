@@ -364,8 +364,9 @@ class AppContainer(context: Context) {
     }
 
     /**
-     * Asks for the weather every Run is still owed, unless an earlier ask is still working through
-     * its list (#444). Called each time the app comes to the front, cold start included.
+     * Asks for the weather every Run is still owed — and if an earlier ask is still working through
+     * its list, once more after it ends (#444). Called each time the app comes to the front, cold start
+     * included.
      *
      * Runs recorded before the weather shipped, or saved offline, have the position and the time to
      * look one up and nothing stored (#81, #79). Not a launch pass, because it waits on the network:
