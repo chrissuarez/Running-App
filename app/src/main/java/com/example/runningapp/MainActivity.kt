@@ -666,7 +666,7 @@ class MainActivity : ComponentActivity() {
                                     hrService?.hrState?.value?.let {
                                         val runRowId = it.activeDbSessionId
                                         if (runRowId != null &&
-                                            (it.lifecycle == RunLifecycle.RUNNING || it.lifecycle == RunLifecycle.PAUSED)
+                                            it.lifecycle.isLive
                                         ) {
                                             feelSheetSessionId = runRowId
                                             // And the Stage waits for what this sheet is about to
@@ -771,9 +771,7 @@ class MainActivity : ComponentActivity() {
                                 settings = userSettings,
                                 acquisition = serviceState?.value?.acquisition ?: AcquisitionState(),
                                 scannedDevices = serviceState?.value?.scannedDevices ?: emptyList(),
-                                isRunActive = serviceState?.value?.lifecycle.let {
-                                    it == RunLifecycle.RUNNING || it == RunLifecycle.PAUSED
-                                },
+                                isRunActive = serviceState?.value?.lifecycle?.isLive == true,
                                 onSetActive = { address ->
                                     scope.launch {
                                         settingsRepository.setActiveDevice(address)
