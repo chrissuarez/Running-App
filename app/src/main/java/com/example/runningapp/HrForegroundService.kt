@@ -841,7 +841,7 @@ class HrForegroundService : Service() {
      * The one write of the Run into [HrState] (#130), replacing some thirty scattered updates.
      *
      * The Run returns its whole state, so there is nothing to decide here beyond naming: which of
-     * the Run's fields each of the screen's older names is. The Strap's own writes are untouched,
+     * the Run's fields each of the screen's older names is, where the screen still has one. The Strap's own writes are untouched,
      * and no UI file is modified.
      *
      * The rule for a Run that is not live: the published state describes a Run in progress, so with
@@ -1476,8 +1476,7 @@ class HrForegroundService : Service() {
     }
 
     fun isSessionActive(): Boolean =
-        _hrState.value.lifecycle == RunLifecycle.RUNNING ||
-            _hrState.value.lifecycle == RunLifecycle.PAUSED
+        _hrState.value.lifecycle.isLive
 
     override fun onBind(intent: Intent): IBinder {
         isActivityBound = true
@@ -1738,8 +1737,7 @@ class HrForegroundService : Service() {
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
                 val status = _hrState.value.lifecycle
-                val runActive = status == RunLifecycle.RUNNING || status == RunLifecycle.PAUSED
-                if (runActive) {
+                if (status.isLive) {
                     // Scanning tears down the current strap, and a scan-only disconnect sets STOPPED
                     // without going through stopRun()'s finalization (see disconnect()) — so a
                     // scan mid-run would silently drop the active run and orphan its DB row. Pairing
@@ -2692,8 +2690,7 @@ class HrForegroundService : Service() {
         // that Run earns it below. Promoting for simulation itself would strand the notification
         // and wake lock after every simulated run, because isSimulationEnabled is never cleared
         // by STOP.
-        val status = _hrState.value.lifecycle
-        if (status == RunLifecycle.RUNNING || status == RunLifecycle.PAUSED) {
+        if (_hrState.value.lifecycle.isLive) {
             // A Run is already going; it simply gains a simulated Strap.
             return false
         }

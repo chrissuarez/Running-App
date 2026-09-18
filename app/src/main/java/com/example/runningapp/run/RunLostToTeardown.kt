@@ -1,6 +1,5 @@
 package com.example.runningapp.run
 
-
 /**
  * What a service teardown found of the Run it was recording, if it was recording one — #309's
  * shape, decided rather than merely written down, and #314's shape beside it.

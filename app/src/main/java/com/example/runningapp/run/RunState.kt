@@ -41,11 +41,11 @@ enum class RunLifecycle {
     /**
      * A Run that is still accruing time, or could resume and start again.
      *
-     * The one reading of "recording", because two places draw conclusions from it and they must
-     * not be allowed to differ: the Run Journal, which calls the crossing out of it a stop, and
-     * [runLostToTeardown], which calls a teardown that arrives while it is still true a Run lost. A
-     * second copy of this rule is how the journal would come to say a Run was stopped that the
-     * teardown then rescued as unstopped.
+     * The one reading of "recording". Every place that asks whether a Run is under way asks here,
+     * because the answers must not be allowed to differ: the Run Journal calls the crossing out of
+     * it a stop, and [runLostToTeardown] calls a teardown that arrives while it is still true a Run
+     * lost. A second copy of this rule is how the journal would come to say a Run was stopped that
+     * the teardown then rescued as unstopped.
      */
     val isLive: Boolean get() = this == RUNNING || this == PAUSED
 }
