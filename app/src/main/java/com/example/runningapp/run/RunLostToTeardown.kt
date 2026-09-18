@@ -1,7 +1,5 @@
 package com.example.runningapp.run
 
-import com.example.runningapp.SessionStatus
-import com.example.runningapp.isRecording
 
 /**
  * What a service teardown found of the Run it was recording, if it was recording one — #309's
@@ -99,23 +97,23 @@ fun runLostToTeardown(
  * ([RunState.pendingRowEffects]).
  */
 data class RunAtLastDispatch(
-    val status: SessionStatus,
+    val status: RunLifecycle,
     val liveRunRowId: Long?,
     val heldWork: List<PendingRowWork>,
 ) {
     companion object {
 
         /** No Run has been dispatched yet, which is no Run for a teardown to find. */
-        val NONE = RunAtLastDispatch(SessionStatus.IDLE, liveRunRowId = null, heldWork = emptyList())
+        val NONE = RunAtLastDispatch(RunLifecycle.IDLE, liveRunRowId = null, heldWork = emptyList())
     }
 }
 
 fun runLostToTeardown(
-    status: SessionStatus,
+    status: RunLifecycle,
     liveRunRowId: Long?,
     heldWork: List<PendingRowWork> = emptyList(),
 ): RunLostToTeardown? = when {
-    status.isRecording ->
+    status.isLive ->
         liveRunRowId?.let { RunLostToTeardown.HasRow(it) }
             ?: RunLostToTeardown.AwaitingItsRow(heldWork)
 
@@ -124,7 +122,7 @@ fun runLostToTeardown(
     // way and by the same branch as a Run stopped a beat before its state said so. An empty
     // buffer is a Run whose work has already gone out, and a row id is the event that empties it,
     // so either one leaves this teardown nothing to do.
-    status == SessionStatus.STOPPING && liveRunRowId == null && heldWork.isNotEmpty() ->
+    status == RunLifecycle.STOPPING && liveRunRowId == null && heldWork.isNotEmpty() ->
         RunLostToTeardown.AwaitingItsRow(heldWork)
 
     else -> null

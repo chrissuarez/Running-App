@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import com.example.runningapp.recording.Clock
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.recording.PauseMark
 import com.example.runningapp.recording.SessionRecorder
@@ -23,7 +24,7 @@ class LocationTracker(
     private val fusedLocationClient: FusedLocationProviderClient,
     private val logTag: String,
     announceSplit: (String) -> Unit,
-    private val getSessionStatus: () -> SessionStatus,
+    private val getLifecycle: () -> RunLifecycle,
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
     private val onRawFix: (location: Location, barometerPressureHpa: Float?, startsAfterPause: Boolean) -> Unit = { _, _, _ -> },
@@ -139,12 +140,12 @@ class LocationTracker(
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
-                val status = getSessionStatus()
+                val status = getLifecycle()
                 // Auto-pause (#39) keeps GPS registered through a standstill so movement can be
                 // detected - unlike a manual pause, which fully stops updates via stop() below -
                 // so fixes must keep flowing to SessionRecorder while auto-paused too.
-                val autoPaused = status == SessionStatus.PAUSED && sessionRecorder.isAutoPaused()
-                val shouldProcess = status == SessionStatus.RUNNING || autoPaused
+                val autoPaused = status == RunLifecycle.PAUSED && sessionRecorder.isAutoPaused()
+                val shouldProcess = status == RunLifecycle.RUNNING || autoPaused
                 if (!shouldProcess) {
                     Log.d(logTag, "Ignoring location update - session not running")
                     return

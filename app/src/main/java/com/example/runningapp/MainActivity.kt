@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import android.net.Uri
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.StartRunRequest
 import com.example.runningapp.run.RunRoute
@@ -665,7 +666,7 @@ class MainActivity : ComponentActivity() {
                                     hrService?.hrState?.value?.let {
                                         val runRowId = it.activeDbSessionId
                                         if (runRowId != null &&
-                                            (it.sessionStatus == SessionStatus.RUNNING || it.sessionStatus == SessionStatus.PAUSED)
+                                            (it.lifecycle == RunLifecycle.RUNNING || it.lifecycle == RunLifecycle.PAUSED)
                                         ) {
                                             feelSheetSessionId = runRowId
                                             // And the Stage waits for what this sheet is about to
@@ -770,8 +771,8 @@ class MainActivity : ComponentActivity() {
                                 settings = userSettings,
                                 acquisition = serviceState?.value?.acquisition ?: AcquisitionState(),
                                 scannedDevices = serviceState?.value?.scannedDevices ?: emptyList(),
-                                isRunActive = serviceState?.value?.sessionStatus.let {
-                                    it == SessionStatus.RUNNING || it == SessionStatus.PAUSED
+                                isRunActive = serviceState?.value?.lifecycle.let {
+                                    it == RunLifecycle.RUNNING || it == RunLifecycle.PAUSED
                                 },
                                 onSetActive = { address ->
                                     scope.launch {
@@ -891,8 +892,8 @@ class MainActivity : ComponentActivity() {
                                 onConfirmRestore = restoreViewModel::confirm,
                                 onDismissRestore = restoreViewModel::dismiss,
                                 runInProgress = serviceState?.value?.let {
-                                    it.sessionStatus != SessionStatus.IDLE &&
-                                        it.sessionStatus != SessionStatus.STOPPED
+                                    it.lifecycle != RunLifecycle.IDLE &&
+                                        it.lifecycle != RunLifecycle.STOPPED
                                 } ?: false,
                                 offlineMapState = offlineMapState,
                                 onDownloadOfflineMap = {
@@ -1986,7 +1987,7 @@ fun MainScreen(
 
     // Declared here rather than beside the strap effect below because the route suggestion's read
     // is keyed on it: a Run ending is one of the moments that read has to be re-taken at.
-    val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
+    val isSessionActive = state.lifecycle != RunLifecycle.IDLE && state.lifecycle != RunLifecycle.STOPPED
 
     // The last Run this screen watched go live, kept after the session goes idle so the read below
     // knows which row to wait for (#422). Held rather than read straight off the state, because by
@@ -2300,7 +2301,7 @@ fun MainScreen(
                                             .weight(1f)
                                             .heightIn(min = RunningUiTokens.MinTouchTarget)
                                     ) {
-                                        Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                                        Text(if (state.lifecycle == RunLifecycle.PAUSED) "Resume" else "Pause")
                                     }
                                     Button(
                                         onClick = { hrService?.skipCurrentPhase() },
@@ -2977,7 +2978,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
             Spacer(modifier = Modifier.height(8.dp))
             Text("Connection: ${state.connectionStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                "Debug state: ${state.sessionStatus} • ${state.currentPhase}",
+                "Debug state: ${state.lifecycle} • ${state.currentPhase}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

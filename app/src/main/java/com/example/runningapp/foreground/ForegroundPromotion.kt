@@ -1,6 +1,6 @@
 package com.example.runningapp.foreground
 
-import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.RunLifecycle
 import kotlinx.coroutines.flow.Flow
 
 // Whether an Acquisition is in flight used to be answered here, by searching the status text for
@@ -99,8 +99,8 @@ class ForegroundPromotion(private val host: PromotionHost) {
      * unchanged answer of "not promoted" still unwinds an outstanding start, once. See
      * [startNeedsUnwinding].
      */
-    fun reconcile(sessionStatus: SessionStatus, acquiringStrap: Boolean) {
-        val earned = isEarned(sessionStatus, acquiringStrap)
+    fun reconcile(lifecycle: RunLifecycle, acquiringStrap: Boolean) {
+        val earned = isEarned(lifecycle, acquiringStrap)
         if (earned == isPromoted) {
             if (!earned && startNeedsUnwinding) unwind()
             return
@@ -130,13 +130,13 @@ class ForegroundPromotion(private val host: PromotionHost) {
      * [reconcile]'s edge-triggering was protecting — demote() ends in stopSelf(), and this sees
      * every per-second heartbeat.
      */
-    suspend fun follow(states: Flow<Pair<SessionStatus, Boolean>>) {
-        var lastSeen: Triple<SessionStatus, Boolean, Boolean>? = null
-        states.collect { (sessionStatus, acquiringStrap) ->
-            val seen = Triple(sessionStatus, acquiringStrap, isPromoted)
+    suspend fun follow(states: Flow<Pair<RunLifecycle, Boolean>>) {
+        var lastSeen: Triple<RunLifecycle, Boolean, Boolean>? = null
+        states.collect { (lifecycle, acquiringStrap) ->
+            val seen = Triple(lifecycle, acquiringStrap, isPromoted)
             if (seen == lastSeen) return@collect
             lastSeen = seen
-            reconcile(sessionStatus, acquiringStrap)
+            reconcile(lifecycle, acquiringStrap)
         }
     }
 
@@ -188,10 +188,10 @@ class ForegroundPromotion(private val host: PromotionHost) {
          * because isSimulationEnabled is never cleared by STOP, treating it as a reason of its own
          * would re-promote a runless service after every simulated run.
          */
-        fun isEarned(sessionStatus: SessionStatus, acquiringStrap: Boolean): Boolean =
+        fun isEarned(lifecycle: RunLifecycle, acquiringStrap: Boolean): Boolean =
             acquiringStrap ||
-                sessionStatus == SessionStatus.RUNNING ||
-                sessionStatus == SessionStatus.PAUSED ||
-                sessionStatus == SessionStatus.STOPPING
+                lifecycle == RunLifecycle.RUNNING ||
+                lifecycle == RunLifecycle.PAUSED ||
+                lifecycle == RunLifecycle.STOPPING
     }
 }

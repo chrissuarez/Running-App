@@ -3,7 +3,7 @@ package com.example.runningapp.ui.workout
 import com.example.runningapp.CueCondition
 import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
-import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.coachingCue
@@ -125,7 +125,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // in a coached phase (MAIN/WARM_UP), with coaching on; anywhere else — coaching off, cool-down,
     // paused — avgBpm is stale (0, or frozen at the last main-run value) while bpm keeps changing,
     // so show the live bpm. That gives a live zone/colour rather than a dash or a frozen zone.
-    val coachSampling = state.sessionStatus == SessionStatus.RUNNING &&
+    val coachSampling = state.lifecycle == RunLifecycle.RUNNING &&
         (state.currentPhase == SessionPhase.MAIN || state.currentPhase == SessionPhase.WARM_UP) &&
         state.userSettings.coachingEnabled
     val displayBpm = if (coachSampling && state.avgBpm > 0) state.avgBpm else state.bpm
@@ -229,7 +229,7 @@ fun mapIntervalTimelineUiState(state: HrState): IntervalTimelineUiState {
 }
 
 fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
-    val staleSignal = state.sessionStatus.name == "RUNNING" && state.lastHrAgeSeconds >= 8
+    val staleSignal = state.lifecycle == RunLifecycle.RUNNING && state.lastHrAgeSeconds >= 8
 
     val reasonTag = when {
         staleSignal -> CUE_REASON_SENSOR_LOST
