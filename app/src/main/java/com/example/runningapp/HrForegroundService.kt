@@ -107,21 +107,6 @@ import com.example.runningapp.foreground.drainChildren
 import com.example.runningapp.foreground.runMayBeGivenWork
 import java.time.ZoneId
 
-// Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
-// the only thing that writes it, so there is no value here a Run cannot be in.
-enum class SessionStatus { IDLE, RUNNING, PAUSED, STOPPING, STOPPED }
-
-/**
- * Whether the Run is still taking down seconds.
- *
- * The one reading of "recording", kept beside the states it reads, because two places draw
- * conclusions from it and they must not be allowed to differ: the Run Journal, which calls the
- * crossing out of it a stop, and [com.example.runningapp.run.runLostToTeardown], which calls a
- * teardown that arrives while it is still true a Run lost. A second copy of this rule is how the
- * journal would come to say a Run was stopped that the teardown then rescued as unstopped.
- */
-val SessionStatus.isRecording: Boolean
-    get() = this == SessionStatus.RUNNING || this == SessionStatus.PAUSED
 enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
 enum class StructuredWorkoutPhase { RUN, WALK }
 
@@ -137,7 +122,7 @@ data class HrState(
      * the sentence — including Promotion, which decided a wake lock by searching it for four words.
      */
     val acquisition: AcquisitionState = AcquisitionState(),
-    val sessionStatus: SessionStatus = SessionStatus.IDLE,
+    val lifecycle: RunLifecycle = RunLifecycle.IDLE,
     val bpm: Int = 0,
 
     val avgBpm: Int = 0,
@@ -404,7 +389,7 @@ class HrForegroundService : Service() {
     private var locationTracker: LocationTracker? = null
     private var lastNotificationZone: HrZone? = null
     private var lastNotificationPhase = SessionPhase.WARM_UP
-    private var lastNotificationStatus = SessionStatus.IDLE
+    private var lastNotificationStatus = RunLifecycle.IDLE
 
     // --- The Run ---
     //
@@ -655,7 +640,7 @@ class HrForegroundService : Service() {
         val state = _hrState.value
         promotionRun.observe(state.activeDbSessionId)
         runJournalWatch.observe(
-            JournaledState(state.sessionStatus, state.activeDbSessionId, state.acquisition.phase)
+            JournaledState(state.lifecycle, state.activeDbSessionId, state.acquisition.phase)
         )
     }
 
@@ -869,7 +854,7 @@ class HrForegroundService : Service() {
         val hrAge = if (lastHrTimestamp > 0) (nowMillis - lastHrTimestamp) / 1000 else 0
         _hrState.update {
             it.copy(
-                sessionStatus = run.lifecycle.asSessionStatus(),
+                lifecycle = run.lifecycle,
                 secondsRunning = run.secondsRunning,
                 walkBreaksCount = run.walkBreaks,
                 lastHrAgeSeconds = hrAge,
@@ -915,18 +900,10 @@ class HrForegroundService : Service() {
         // published as one value because a teardown that read the parts separately would be asking
         // about two different moments — see [runAtLastDispatch].
         runAtLastDispatch = RunAtLastDispatch(
-            status = run.lifecycle.asSessionStatus(),
+            status = run.lifecycle,
             liveRunRowId = if (live) run.runRowId else null,
             heldWork = run.pendingRowEffects,
         )
-    }
-
-    private fun RunLifecycle.asSessionStatus(): SessionStatus = when (this) {
-        RunLifecycle.IDLE -> SessionStatus.IDLE
-        RunLifecycle.RUNNING -> SessionStatus.RUNNING
-        RunLifecycle.PAUSED -> SessionStatus.PAUSED
-        RunLifecycle.STOPPING -> SessionStatus.STOPPING
-        RunLifecycle.STOPPED -> SessionStatus.STOPPED
     }
 
     private fun RunPhase.asSessionPhase(): SessionPhase = when (this) {
@@ -1499,8 +1476,8 @@ class HrForegroundService : Service() {
     }
 
     fun isSessionActive(): Boolean =
-        _hrState.value.sessionStatus == SessionStatus.RUNNING ||
-            _hrState.value.sessionStatus == SessionStatus.PAUSED
+        _hrState.value.lifecycle == RunLifecycle.RUNNING ||
+            _hrState.value.lifecycle == RunLifecycle.PAUSED
 
     override fun onBind(intent: Intent): IBinder {
         isActivityBound = true
@@ -1550,7 +1527,7 @@ class HrForegroundService : Service() {
         // promote (#144), so the subscription lives in follow().
         // See docs/adr/0001-promotion-is-derived-not-claimed.md.
         serviceScope.launch {
-            promotion.follow(_hrState.map { it.sessionStatus to it.acquiringStrap })
+            promotion.follow(_hrState.map { it.lifecycle to it.acquiringStrap })
         }
 
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -1570,7 +1547,7 @@ class HrForegroundService : Service() {
             fusedLocationClient = fusedLocationClient,
             logTag = TAG,
             announceSplit = { enqueueCue(it, CuePriority.INFORMATION) },
-            getSessionStatus = { _hrState.value.sessionStatus },
+            getLifecycle = { _hrState.value.lifecycle },
             isSplitAnnouncementsEnabled = { currentSettings.splitAnnouncementsEnabled },
             onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
                 _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }
@@ -1760,8 +1737,8 @@ class HrForegroundService : Service() {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
-                val status = _hrState.value.sessionStatus
-                val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
+                val status = _hrState.value.lifecycle
+                val runActive = status == RunLifecycle.RUNNING || status == RunLifecycle.PAUSED
                 if (runActive) {
                     // Scanning tears down the current strap, and a scan-only disconnect sets STOPPED
                     // without going through stopRun()'s finalization (see disconnect()) — so a
@@ -1956,7 +1933,7 @@ class HrForegroundService : Service() {
         val notificationZone = hrZoneOf(currentState.bpm, currentSettings)
         val zoneChanged = notificationZone != lastNotificationZone
         val phaseChanged = currentState.currentPhase != lastNotificationPhase
-        val statusChanged = currentState.sessionStatus != lastNotificationStatus
+        val statusChanged = currentState.lifecycle != lastNotificationStatus
 
         val isCritical = zoneChanged || phaseChanged || statusChanged ||
             currentState.acquisition.phase is AcquisitionPhase.Blocked
@@ -1969,7 +1946,7 @@ class HrForegroundService : Service() {
         lastNotificationTime = now
         lastNotificationZone = notificationZone
         lastNotificationPhase = currentState.currentPhase
-        lastNotificationStatus = currentState.sessionStatus
+        lastNotificationStatus = currentState.lifecycle
 
         // Posting belongs to Promotion, which drops the text when there is no notification to put
         // it on — without that, an update landing just after a demotion posts one nothing owns and
@@ -2020,7 +1997,7 @@ class HrForegroundService : Service() {
             runJournal.write(
                 RunJournalEvent.DEMOTED,
                 promotionRun.ends(state.activeDbSessionId),
-                "status=${state.sessionStatus}",
+                "status=${state.lifecycle}",
             )
             releaseWakeLock()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -2146,7 +2123,7 @@ class HrForegroundService : Service() {
      */
     private fun reconcileForegroundPromotion() {
         val state = _hrState.value
-        promotion.reconcile(state.sessionStatus, state.acquiringStrap)
+        promotion.reconcile(state.lifecycle, state.acquiringStrap)
     }
 
     /**
@@ -2200,8 +2177,8 @@ class HrForegroundService : Service() {
             .setOngoing(true)
             .setContentIntent(openTheApp(requestCode = 0))
 
-        when (_hrState.value.sessionStatus) {
-            SessionStatus.RUNNING -> {
+        when (_hrState.value.lifecycle) {
+            RunLifecycle.RUNNING -> {
                 val pauseIntent = Intent(this, HrForegroundService::class.java).apply {
                     action = ACTION_PAUSE_SESSION
                 }
@@ -2211,7 +2188,7 @@ class HrForegroundService : Service() {
                 )
                 builder.addAction(android.R.drawable.ic_media_pause, "Pause", pausePendingIntent)
             }
-            SessionStatus.PAUSED -> {
+            RunLifecycle.PAUSED -> {
                 val resumeIntent = Intent(this, HrForegroundService::class.java).apply {
                     action = ACTION_RESUME_SESSION
                 }
@@ -2699,7 +2676,7 @@ class HrForegroundService : Service() {
     fun setSimulationEnabled(enabled: Boolean, runMode: RunMode = RunMode.ofSettingValue(currentSettings.runMode)): Boolean {
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
-            Log.d(TAG, "Simulation unchanged: enabled=$isSimulationEnabled status=${_hrState.value.sessionStatus}")
+            Log.d(TAG, "Simulation unchanged: enabled=$isSimulationEnabled status=${_hrState.value.lifecycle}")
             return false
         }
 
@@ -2715,8 +2692,8 @@ class HrForegroundService : Service() {
         // that Run earns it below. Promoting for simulation itself would strand the notification
         // and wake lock after every simulated run, because isSimulationEnabled is never cleared
         // by STOP.
-        val status = _hrState.value.sessionStatus
-        if (status == SessionStatus.RUNNING || status == SessionStatus.PAUSED) {
+        val status = _hrState.value.lifecycle
+        if (status == RunLifecycle.RUNNING || status == RunLifecycle.PAUSED) {
             // A Run is already going; it simply gains a simulated Strap.
             return false
         }
@@ -3083,7 +3060,7 @@ class HrForegroundService : Service() {
         val stateAtTeardown = _hrState.value
         journal(
             RunJournalEvent.SERVICE_DESTROYED,
-            "status=${stateAtTeardown.sessionStatus} promoted=${promotion.isPromoted} " +
+            "status=${stateAtTeardown.lifecycle} promoted=${promotion.isPromoted} " +
                 "bound=$isActivityBound"
         )
         // Written before any of the teardown below, and on disk by the time that write returns:

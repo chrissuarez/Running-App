@@ -1,6 +1,6 @@
 package com.example.runningapp.diagnostics
 
-import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.AcquisitionBlock
 import com.example.runningapp.run.AcquisitionPhase
 import java.io.ByteArrayOutputStream
@@ -17,8 +17,8 @@ class RunJournalWatchTest {
     val folder = TemporaryFolder()
 
     private val idle = JournaledState()
-    private val running = JournaledState(sessionStatus = SessionStatus.RUNNING, runRowId = 41)
-    private val paused = running.copy(sessionStatus = SessionStatus.PAUSED)
+    private val running = JournaledState(lifecycle = RunLifecycle.RUNNING, runRowId = 41)
+    private val paused = running.copy(lifecycle = RunLifecycle.PAUSED)
     private val strap = AcquisitionPhase.Connected(address = "AA:BB", name = "HRM-Pro")
 
     private fun events(before: JournaledState, after: JournaledState) =
@@ -74,8 +74,8 @@ class RunJournalWatchTest {
 
     @Test
     fun `a run stopping is one line, not one per step of the stop`() {
-        val stopping = running.copy(sessionStatus = SessionStatus.STOPPING)
-        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopping = running.copy(lifecycle = RunLifecycle.STOPPING)
+        val stopped = JournaledState(lifecycle = RunLifecycle.STOPPED, runRowId = null)
 
         assertEquals(listOf(RunJournalEvent.RUN_STOPPED), events(running, stopping))
         assertEquals(emptyList<RunJournalEvent>(), events(stopping, stopped))
@@ -83,7 +83,7 @@ class RunJournalWatchTest {
 
     @Test
     fun `the run that stopped is named, though the live run is already gone`() {
-        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopped = JournaledState(lifecycle = RunLifecycle.STOPPED, runRowId = null)
 
         assertEquals(
             listOf(RunJournalEntry(RunJournalEvent.RUN_STOPPED, runRowId = 41)),
@@ -191,7 +191,7 @@ class RunJournalWatchTest {
         val connected = running.copy(
             acquisition = AcquisitionPhase.Connected(address = "AA:BB", name = "HRM-Pro")
         )
-        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopped = JournaledState(lifecycle = RunLifecycle.STOPPED, runRowId = null)
 
         assertEquals(
             listOf(RunJournalEvent.RUN_STOPPED, RunJournalEvent.STRAP_DISCONNECTED),
@@ -215,8 +215,8 @@ class RunJournalWatchTest {
             journaled(
                 running,
                 running.copy(acquisition = strap),
-                JournaledState(sessionStatus = SessionStatus.STOPPED, acquisition = strap),
-                JournaledState(sessionStatus = SessionStatus.STOPPED),
+                JournaledState(lifecycle = RunLifecycle.STOPPED, acquisition = strap),
+                JournaledState(lifecycle = RunLifecycle.STOPPED),
             )
         )
     }
@@ -244,9 +244,9 @@ class RunJournalWatchTest {
             ),
             journaled(
                 running,
-                JournaledState(sessionStatus = SessionStatus.STOPPED),
-                JournaledState(sessionStatus = SessionStatus.STOPPED, acquisition = strap),
-                JournaledState(sessionStatus = SessionStatus.STOPPED),
+                JournaledState(lifecycle = RunLifecycle.STOPPED),
+                JournaledState(lifecycle = RunLifecycle.STOPPED, acquisition = strap),
+                JournaledState(lifecycle = RunLifecycle.STOPPED),
             )
         )
     }
@@ -281,8 +281,8 @@ class RunJournalWatchTest {
             journaled(
                 idle.copy(acquisition = strap),
                 running.copy(acquisition = strap),
-                JournaledState(sessionStatus = SessionStatus.STOPPED, acquisition = strap),
-                JournaledState(sessionStatus = SessionStatus.STOPPED),
+                JournaledState(lifecycle = RunLifecycle.STOPPED, acquisition = strap),
+                JournaledState(lifecycle = RunLifecycle.STOPPED),
             )
         )
     }
@@ -294,7 +294,7 @@ class RunJournalWatchTest {
         // which was over before it was put on is the wrong guess the journal must never make (#310).
         // The Run after it proves the forgetting is per connection and not a memory switched off.
         val nextRun = running.copy(runRowId = 42)
-        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED)
+        val stopped = JournaledState(lifecycle = RunLifecycle.STOPPED)
 
         assertEquals(
             listOf(

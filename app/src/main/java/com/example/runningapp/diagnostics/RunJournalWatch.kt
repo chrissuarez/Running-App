@@ -1,7 +1,6 @@
 package com.example.runningapp.diagnostics
 
-import com.example.runningapp.SessionStatus
-import com.example.runningapp.isRecording
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.AcquisitionPhase
 
 /**
@@ -13,7 +12,7 @@ import com.example.runningapp.run.AcquisitionPhase
  * claimed (ADR 0001). A line cannot be forgotten at a new call site if there is no call site.
  */
 data class JournaledState(
-    val sessionStatus: SessionStatus = SessionStatus.IDLE,
+    val lifecycle: RunLifecycle = RunLifecycle.IDLE,
     /** The live Run's row, null before it lands and again once the Run is over. */
     val runRowId: Long? = null,
     val acquisition: AcquisitionPhase = AcquisitionPhase.Idle,
@@ -38,7 +37,7 @@ fun journalEntriesFor(
     val runRowId = after.runRowId ?: before.runRowId
     val entries = mutableListOf<RunJournalEntry>()
 
-    runEvent(before.sessionStatus, after.sessionStatus)?.let {
+    runEvent(before.lifecycle, after.lifecycle)?.let {
         entries += RunJournalEntry(it, runRowId)
     }
     if (before.runRowId == null && after.runRowId != null) {
@@ -52,12 +51,12 @@ fun journalEntriesFor(
  * A Run stops once, however many steps its stop takes: STOPPING and STOPPED are both "not
  * recording", and only the crossing out of RUNNING or PAUSED is news.
  */
-private fun runEvent(before: SessionStatus, after: SessionStatus): RunJournalEvent? = when {
+private fun runEvent(before: RunLifecycle, after: RunLifecycle): RunJournalEvent? = when {
     before == after -> null
-    after == SessionStatus.RUNNING && before == SessionStatus.PAUSED -> RunJournalEvent.RUN_RESUMED
-    after == SessionStatus.RUNNING -> RunJournalEvent.RUN_STARTED
-    after == SessionStatus.PAUSED && before == SessionStatus.RUNNING -> RunJournalEvent.RUN_PAUSED
-    before.isRecording && !after.isRecording -> RunJournalEvent.RUN_STOPPED
+    after == RunLifecycle.RUNNING && before == RunLifecycle.PAUSED -> RunJournalEvent.RUN_RESUMED
+    after == RunLifecycle.RUNNING -> RunJournalEvent.RUN_STARTED
+    after == RunLifecycle.PAUSED && before == RunLifecycle.RUNNING -> RunJournalEvent.RUN_PAUSED
+    before.isLive && !after.isLive -> RunJournalEvent.RUN_STOPPED
     else -> null
 }
 

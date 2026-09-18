@@ -4,7 +4,7 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.HrState
 import com.example.runningapp.HrZone
 import com.example.runningapp.SessionPhase
-import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.UserSettings
 import com.example.runningapp.ZoneBand
@@ -16,7 +16,7 @@ import org.junit.Test
 class WorkoutPlayerModelsTest {
 
     private fun stateWithHr(bpm: Int, targetZone: Int) = HrState(
-        sessionStatus = SessionStatus.RUNNING,
+        lifecycle = RunLifecycle.RUNNING,
         currentPhase = SessionPhase.MAIN,
         bpm = bpm,
         avgBpm = bpm,
@@ -88,7 +88,7 @@ class WorkoutPlayerModelsTest {
         // still reports live bpm. The runner must still see a live zone, not a bare dash. 140 bpm is
         // Tempo (Z3) and ABOVE a Z2 target.
         val state = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             bpm = 140,
             avgBpm = 0,
@@ -105,7 +105,7 @@ class WorkoutPlayerModelsTest {
         // while fresh bpm packets keep arriving (120, recovered into Z2). Without the coaching gate
         // the screen would freeze at the pre-toggle zone; it must track the live 120.
         val state = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             bpm = 120,
             avgBpm = 175,
@@ -123,7 +123,7 @@ class WorkoutPlayerModelsTest {
         // well above) while bpm keeps arriving (120, recovered into Z2). The screen must follow
         // the live 120, not the frozen 175.
         val coolDown = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.COOL_DOWN,
             bpm = 120,
             avgBpm = 175,
@@ -132,7 +132,7 @@ class WorkoutPlayerModelsTest {
         assertEquals("Moderate — on target", mapWorkoutPlayerUiState(coolDown).zoneStatusText)
         assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(coolDown).zoneBand)
 
-        val paused = coolDown.copy(currentPhase = SessionPhase.MAIN, sessionStatus = SessionStatus.PAUSED)
+        val paused = coolDown.copy(currentPhase = SessionPhase.MAIN, lifecycle = RunLifecycle.PAUSED)
         assertEquals("Moderate — on target", mapWorkoutPlayerUiState(paused).zoneStatusText)
     }
 
@@ -141,7 +141,7 @@ class WorkoutPlayerModelsTest {
         // With coaching on, the screen bands off avgBpm — the same reading the coach uses — even if
         // the instantaneous bpm has momentarily diverged. avgBpm 140 is Tempo/ABOVE a Z2 target.
         val state = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             bpm = 120,
             avgBpm = 140,
@@ -184,7 +184,7 @@ class WorkoutPlayerModelsTest {
     @Test
     fun `mapWorkoutPlayerUiState builds expected labels and cue reason`() {
         val state = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = true,
             structuredWorkoutPhase = StructuredWorkoutPhase.WALK,
@@ -215,7 +215,7 @@ class WorkoutPlayerModelsTest {
         // fire (#107). Blanking the zone-coaching passthrough isolates the gate: with nothing else
         // to say, the open run yields no cue at all.
         val openRun = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
             coachWaitingLine = ""
@@ -234,7 +234,7 @@ class WorkoutPlayerModelsTest {
         // tag this walk CUE_REASON_HR_HIGH and put "Safety cue active" over a walk the Workout
         // asked for (#167).
         val plannedWalk = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = true,
             structuredWorkoutPhase = StructuredWorkoutPhase.WALK,
@@ -251,7 +251,7 @@ class WorkoutPlayerModelsTest {
     @Test
     fun `the coach card advises easing off rather than ordering a walk`() {
         val aboveTarget = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = true,
             triggerAtSecond = 18,
@@ -271,7 +271,7 @@ class WorkoutPlayerModelsTest {
         // totalRepeats is 0. The panel must read "Main" rather than an interval that has not begun
         // (#149).
         val gap = HrState(
-            sessionStatus = SessionStatus.RUNNING,
+            lifecycle = RunLifecycle.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = true,
             totalRepeats = 0,
@@ -289,7 +289,7 @@ class WorkoutPlayerModelsTest {
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
             phaseSecondsElapsed = 93,
-            sessionStatus = SessionStatus.RUNNING
+            lifecycle = RunLifecycle.RUNNING
         )
 
         val ui = mapWorkoutPlayerUiState(state)

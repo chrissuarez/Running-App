@@ -1,6 +1,6 @@
 package com.example.runningapp.foreground
 
-import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.AcquisitionBlock
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
@@ -49,29 +49,29 @@ class PromotionEarnedTest {
 
     @Test
     fun `a running run earns promotion`() {
-        assertTrue(ForegroundPromotion.isEarned(SessionStatus.RUNNING, acquiringStrap = false))
+        assertTrue(ForegroundPromotion.isEarned(RunLifecycle.RUNNING, acquiringStrap = false))
     }
 
     @Test
     fun `a paused run earns promotion`() {
-        assertTrue(ForegroundPromotion.isEarned(SessionStatus.PAUSED, acquiringStrap = false))
+        assertTrue(ForegroundPromotion.isEarned(RunLifecycle.PAUSED, acquiringStrap = false))
     }
 
     @Test
     fun `a stopping run still earns promotion`() {
         // STOPPING is a Run stopped before its row id arrived, and holds until the id lands and
         // the Run publishes STOPPED. Demoting here would stopSelf() mid-teardown.
-        assertTrue(ForegroundPromotion.isEarned(SessionStatus.STOPPING, acquiringStrap = false))
+        assertTrue(ForegroundPromotion.isEarned(RunLifecycle.STOPPING, acquiringStrap = false))
     }
 
     @Test
     fun `an idle app earns nothing`() {
-        assertFalse(ForegroundPromotion.isEarned(SessionStatus.IDLE, acquiringStrap = false))
+        assertFalse(ForegroundPromotion.isEarned(RunLifecycle.IDLE, acquiringStrap = false))
     }
 
     @Test
     fun `an acquisition earns promotion with no run`() {
-        assertTrue(ForegroundPromotion.isEarned(SessionStatus.IDLE, acquiringStrap = true))
+        assertTrue(ForegroundPromotion.isEarned(RunLifecycle.IDLE, acquiringStrap = true))
     }
 }
 
@@ -81,7 +81,7 @@ class PromotionEarnedTest {
  */
 class HistoricalLeakTest {
 
-    private fun promotedAfter(status: SessionStatus, phase: AcquisitionPhase): Boolean {
+    private fun promotedAfter(status: RunLifecycle, phase: AcquisitionPhase): Boolean {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand() // what onStartCommand always does
@@ -91,50 +91,50 @@ class HistoricalLeakTest {
 
     @Test
     fun `4fe74cd - a bare sensor connecting with no run does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, CONNECTED))
+        assertFalse(promotedAfter(RunLifecycle.IDLE, CONNECTED))
     }
 
     @Test
     fun `4fe74cd - a pre-run reconnect that gives up does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, NOT_FOUND))
+        assertFalse(promotedAfter(RunLifecycle.IDLE, NOT_FOUND))
     }
 
     @Test
     fun `4fe74cd - an abandoned scan does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, AcquisitionPhase.Idle))
+        assertFalse(promotedAfter(RunLifecycle.IDLE, AcquisitionPhase.Idle))
     }
 
     @Test
     fun `0beef0f - a connect dead-ending on permissions does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, NO_PERMISSION))
+        assertFalse(promotedAfter(RunLifecycle.IDLE, NO_PERMISSION))
     }
 
     @Test
     fun `0beef0f - a connect with no bluetooth adapter does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, NO_BLUETOOTH))
+        assertFalse(promotedAfter(RunLifecycle.IDLE, NO_BLUETOOTH))
     }
 
     @Test
     fun `3bd4d3e - a strap connecting while the finished run finalizes does not hold it`() {
         // Status is already STOPPED while the finalize coroutine drains its writes. The old
         // guard counted the lingering session id as "in flight" and held forever.
-        assertFalse(promotedAfter(SessionStatus.STOPPED, CONNECTED))
+        assertFalse(promotedAfter(RunLifecycle.STOPPED, CONNECTED))
     }
 
     @Test
     fun `3bd4d3e - a live run still holds it while a strap connects`() {
-        assertTrue(promotedAfter(SessionStatus.RUNNING, CONNECTED))
+        assertTrue(promotedAfter(RunLifecycle.RUNNING, CONNECTED))
     }
 
     @Test
     fun `d335ef3 - a START ignored because a run is finalizing does not leak the promotion`() {
         // onStartCommand promoted for Android's deadline, then dispatch ignored the intent.
-        assertFalse(promotedAfter(SessionStatus.STOPPED, AcquisitionPhase.Idle))
+        assertFalse(promotedAfter(RunLifecycle.STOPPED, AcquisitionPhase.Idle))
     }
 
     @Test
     fun `d335ef3 - a START that does begin a run keeps the promotion`() {
-        assertTrue(promotedAfter(SessionStatus.RUNNING, SCANNING))
+        assertTrue(promotedAfter(RunLifecycle.RUNNING, SCANNING))
     }
 }
 
@@ -146,7 +146,7 @@ class EdgeTriggeringTest {
         // bare strap is connected.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        repeat(5) { promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false) }
+        repeat(5) { promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false) }
         assertEquals(emptyList<String>(), host.calls)
     }
 
@@ -154,8 +154,8 @@ class EdgeTriggeringTest {
     fun `a run's heartbeat does not re-promote`() {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        repeat(5) { promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false) }
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        repeat(5) { promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false) }
         assertEquals(listOf("promote"), host.calls)
     }
 
@@ -164,8 +164,8 @@ class EdgeTriggeringTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
     }
 
@@ -176,7 +176,7 @@ class EdgeTriggeringTest {
         // deliberately not edge-triggered.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
         promotion.promoteForStartCommand()
         assertEquals(listOf("promote", "promote"), host.calls)
     }
@@ -186,13 +186,13 @@ class EdgeTriggeringTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = true) // no second promote
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = true) // no second promote
 
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false) // strap connected
-        promotion.reconcile(SessionStatus.PAUSED, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.STOPPING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false) // strap connected
+        promotion.reconcile(RunLifecycle.PAUSED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.STOPPING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.STOPPED, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
     }
 
@@ -200,9 +200,9 @@ class EdgeTriggeringTest {
     fun `an acquisition handing over to a run never drops the promotion`() {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = true)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = true)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = true)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = true)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
         assertEquals(listOf("promote"), host.calls)
     }
 }
@@ -218,7 +218,7 @@ class RefusedPromotionTest {
     fun `a refused promotion is not recorded as promoted`() {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
         assertFalse(promotion.isPromoted)
     }
 
@@ -228,7 +228,7 @@ class RefusedPromotionTest {
         // nothing — and stopForeground(REMOVE) would not clear them.
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
         promotion.showNotification("Zone 3")
         assertEquals(listOf("promote"), host.calls)
     }
@@ -237,8 +237,8 @@ class RefusedPromotionTest {
     fun `a refused promotion is retried on the next state change`() {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = true)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = true)
         assertEquals(listOf("promote", "promote"), host.calls)
     }
 
@@ -248,8 +248,8 @@ class RefusedPromotionTest {
         // nothing to tear down — and demote() ends in stopSelf().
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.STOPPED, acquiringStrap = false)
         assertEquals(listOf("promote"), host.calls)
     }
 
@@ -277,7 +277,7 @@ class UnpromotedStartTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
     }
 
@@ -287,7 +287,7 @@ class UnpromotedStartTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        repeat(5) { promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false) }
+        repeat(5) { promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false) }
         assertEquals(listOf("promote", "demote"), host.calls)
     }
 
@@ -297,7 +297,7 @@ class UnpromotedStartTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = true)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = true)
         assertEquals(listOf("promote", "promote"), host.calls)
     }
 
@@ -306,8 +306,8 @@ class UnpromotedStartTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false) // retried, refused again
-        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false) // retried, refused again
+        promotion.reconcile(RunLifecycle.STOPPED, acquiringStrap = false)
         assertEquals(listOf("promote", "promote", "demote"), host.calls)
     }
 
@@ -319,8 +319,8 @@ class UnpromotedStartTest {
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
         host.platformGrantsIt = true
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.STOPPED, acquiringStrap = false)
         assertEquals(listOf("promote", "promote", "demote"), host.calls)
         assertFalse(promotion.isPromoted)
     }
@@ -330,8 +330,8 @@ class UnpromotedStartTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
     }
 }
@@ -346,8 +346,8 @@ class UnpromotedStartTest {
 @OptIn(ExperimentalCoroutinesApi::class)
 class FollowTest {
 
-    /** The service publishes a session status and a connection status; Promotion reads the pair. */
-    private fun MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>.asPromotionState() =
+    /** The service publishes the Run's lifecycle and a connection status; Promotion reads the pair. */
+    private fun MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>.asPromotionState() =
         map { (status, phase) -> status to inFlight(phase) }
 
     @Test
@@ -356,19 +356,19 @@ class FollowTest {
         // ongoing notification held for minutes with no Run.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
+        val published = MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>(RunLifecycle.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent() // the collector takes up the idle state it starts from
 
         // onStartCommand: promote for Android's five-second deadline, publish "Connecting..."
         // inline, then reconcile at the tail while the acquisition is genuinely in flight.
         promotion.promoteForStartCommand()
-        published.value = SessionStatus.IDLE to CONNECTING
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = true)
+        published.value = RunLifecycle.IDLE to CONNECTING
+        promotion.reconcile(RunLifecycle.IDLE, acquiringStrap = true)
 
         // The connect to a bonded device lands ~10ms later, before the collector has run at all,
         // so StateFlow conflates "Connecting..." away and the pair reads unchanged.
-        published.value = SessionStatus.IDLE to CONNECTED
+        published.value = RunLifecycle.IDLE to CONNECTED
         runCurrent()
 
         assertEquals(listOf("promote", "demote"), host.calls)
@@ -382,12 +382,12 @@ class FollowTest {
         // demote() ends in stopSelf(), and this sees every per-second heartbeat.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to CONNECTED)
+        val published = MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>(RunLifecycle.IDLE to CONNECTED)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
         repeat(5) {
-            published.value = SessionStatus.IDLE to CONNECTED
+            published.value = RunLifecycle.IDLE to CONNECTED
             runCurrent()
         }
 
@@ -399,14 +399,14 @@ class FollowTest {
     fun `a run's heartbeat does not re-promote through the subscription`() = runTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
+        val published = MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>(RunLifecycle.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
-        published.value = SessionStatus.RUNNING to CONNECTED
+        published.value = RunLifecycle.RUNNING to CONNECTED
         runCurrent()
         repeat(5) {
-            published.value = SessionStatus.RUNNING to CONNECTED
+            published.value = RunLifecycle.RUNNING to CONNECTED
             runCurrent()
         }
 
@@ -418,17 +418,17 @@ class FollowTest {
     fun `a full run promotes once and demotes once through the subscription`() = runTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
+        val published = MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>(RunLifecycle.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
         listOf(
-            SessionStatus.IDLE to CONNECTING,
-            SessionStatus.RUNNING to CONNECTED,
-            SessionStatus.PAUSED to CONNECTED,
-            SessionStatus.RUNNING to CONNECTED,
-            SessionStatus.STOPPING to CONNECTED,
-            SessionStatus.STOPPED to CONNECTED,
+            RunLifecycle.IDLE to CONNECTING,
+            RunLifecycle.RUNNING to CONNECTED,
+            RunLifecycle.PAUSED to CONNECTED,
+            RunLifecycle.RUNNING to CONNECTED,
+            RunLifecycle.STOPPING to CONNECTED,
+            RunLifecycle.STOPPED to CONNECTED,
         ).forEach {
             published.value = it
             runCurrent()
@@ -443,17 +443,17 @@ class FollowTest {
     fun `a refused promotion is retried when the state moves, not on every heartbeat`() = runTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
+        val published = MutableStateFlow<Pair<RunLifecycle, AcquisitionPhase>>(RunLifecycle.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
-        published.value = SessionStatus.RUNNING to CONNECTED
+        published.value = RunLifecycle.RUNNING to CONNECTED
         runCurrent()
         repeat(5) { // refused, and isPromoted stayed false — the key must not churn
-            published.value = SessionStatus.RUNNING to CONNECTED
+            published.value = RunLifecycle.RUNNING to CONNECTED
             runCurrent()
         }
-        published.value = SessionStatus.RUNNING to RETRYING
+        published.value = RunLifecycle.RUNNING to RETRYING
         runCurrent()
 
         assertEquals(listOf("promote", "promote"), host.calls)
@@ -467,7 +467,7 @@ class NotificationOwnershipTest {
     fun `a promoted service shows the text`() {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
         promotion.showNotification("Zone 3")
         assertEquals(listOf("promote", "show:Zone 3"), host.calls)
     }
@@ -486,8 +486,8 @@ class NotificationOwnershipTest {
     fun `text posted after a stop is dropped`() {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
-        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.RUNNING, acquiringStrap = false)
+        promotion.reconcile(RunLifecycle.STOPPED, acquiringStrap = false)
         promotion.showNotification("Run complete")
         assertEquals(listOf("promote", "demote"), host.calls)
     }

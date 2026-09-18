@@ -1,6 +1,5 @@
 package com.example.runningapp.run
 
-import com.example.runningapp.SessionStatus
 import com.example.runningapp.ZoneSeconds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -17,7 +16,7 @@ class RunLostToTeardownTest {
     fun `a teardown that arrives while the Run is recording loses it`() {
         assertEquals(
             RunLostToTeardown.HasRow(9133L),
-            runLostToTeardown(SessionStatus.RUNNING, 9133L),
+            runLostToTeardown(RunLifecycle.RUNNING, 9133L),
         )
     }
 
@@ -27,21 +26,21 @@ class RunLostToTeardownTest {
         // whose service has gone.
         assertEquals(
             RunLostToTeardown.HasRow(9133L),
-            runLostToTeardown(SessionStatus.PAUSED, 9133L),
+            runLostToTeardown(RunLifecycle.PAUSED, 9133L),
         )
     }
 
     @Test
     fun `the teardown that follows an ordinary stop loses nothing`() {
-        assertNull(runLostToTeardown(SessionStatus.STOPPED, 9133L))
-        assertNull(runLostToTeardown(SessionStatus.IDLE, null))
+        assertNull(runLostToTeardown(RunLifecycle.STOPPED, 9133L))
+        assertNull(runLostToTeardown(RunLifecycle.IDLE, null))
     }
 
     @Test
     fun `a Run still waiting on its row id was stopped, not lost`() {
         // STOPPING is the runner's own STOP arriving before the insert did. The finalize is held
         // and goes out when the id lands, on a scope that outlives the service.
-        assertNull(runLostToTeardown(SessionStatus.STOPPING, 9133L))
+        assertNull(runLostToTeardown(RunLifecycle.STOPPING, 9133L))
     }
 
     private fun heldSample(second: Long) = PendingRowWork.SaveHrSample(
@@ -80,7 +79,7 @@ class RunLostToTeardownTest {
         // this is a loss with an answer of its own, not a loss with nothing to say.
         assertEquals(
             RunLostToTeardown.AwaitingItsRow(emptyList()),
-            runLostToTeardown(SessionStatus.RUNNING, null),
+            runLostToTeardown(RunLifecycle.RUNNING, null),
         )
     }
 
@@ -89,8 +88,8 @@ class RunLostToTeardownTest {
         // Not a moment the app can publish — the id that empties the buffer ends STOPPING in the
         // same outcome — so this pins the branch rather than a state: with nothing held there is
         // nothing to deliver, and the settling is for delivering.
-        assertNull(runLostToTeardown(SessionStatus.STOPPING, null))
-        assertNull(runLostToTeardown(SessionStatus.IDLE, null))
+        assertNull(runLostToTeardown(RunLifecycle.STOPPING, null))
+        assertNull(runLostToTeardown(RunLifecycle.IDLE, null))
     }
 
     @Test
@@ -98,7 +97,7 @@ class RunLostToTeardownTest {
         // #361: the runner pressed STOP inside the insert's window, so the Run is STOPPING and its
         // own finalize is in the buffer waiting for an id. If the teardown takes the inbox with it
         // the id never reaches the thread, and nobody but this delivers the buffer.
-        val lost = runLostToTeardown(SessionStatus.STOPPING, null, listOf(heldSample(1), heldFinalize))
+        val lost = runLostToTeardown(RunLifecycle.STOPPING, null, listOf(heldSample(1), heldFinalize))
                 as RunLostToTeardown.AwaitingItsRow
 
         assertEquals(listOf(heldSample(1), heldFinalize), lost.heldWork)
@@ -111,7 +110,7 @@ class RunLostToTeardownTest {
         // is of the held work, so a held second is delivered whatever else is or is not beside it.
         // The Run is then put back and its runner told, which is the answer for a Run with no
         // finish of its own — never silence.
-        val lost = runLostToTeardown(SessionStatus.STOPPING, null, listOf(heldSample(1)))
+        val lost = runLostToTeardown(RunLifecycle.STOPPING, null, listOf(heldSample(1)))
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.runnerStopped)
@@ -123,12 +122,12 @@ class RunLostToTeardownTest {
         // Also not a moment the app can publish: STOPPING is not live, so its row id is published
         // as null whatever the Run holds. Pinned because the branch takes three loose values, and
         // a Run whose id has landed is not the Run it is written for.
-        assertNull(runLostToTeardown(SessionStatus.STOPPING, 9133L, listOf(heldFinalize)))
+        assertNull(runLostToTeardown(RunLifecycle.STOPPING, 9133L, listOf(heldFinalize)))
     }
 
     @Test
     fun `a Run holding a banked second has something to save`() {
-        val lost = runLostToTeardown(SessionStatus.RUNNING, null, listOf(heldSample(1)))
+        val lost = runLostToTeardown(RunLifecycle.RUNNING, null, listOf(heldSample(1)))
                 as RunLostToTeardown.AwaitingItsRow
 
         assertTrue(lost.hasSomethingToSave)
@@ -139,7 +138,7 @@ class RunLostToTeardownTest {
     fun `a Run holding only a Pause has nothing to save`() {
         // A Pause is bookkeeping about seconds, not a second. With no sample and no fix behind it
         // the rebuild has nothing to measure, so the runner is not sent looking for a Run.
-        val lost = runLostToTeardown(SessionStatus.RUNNING, null, listOf(heldPause))
+        val lost = runLostToTeardown(RunLifecycle.RUNNING, null, listOf(heldPause))
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.hasSomethingToSave)
@@ -147,7 +146,7 @@ class RunLostToTeardownTest {
 
     @Test
     fun `a Run recorded without a Strap has nothing to save`() {
-        val lost = runLostToTeardown(SessionStatus.RUNNING, null)
+        val lost = runLostToTeardown(RunLifecycle.RUNNING, null)
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.hasSomethingToSave)
@@ -157,7 +156,7 @@ class RunLostToTeardownTest {
     fun `a held finalize says the runner stopped it after all`() {
         // The STOP was dispatched between the teardown's snapshot and its look at the held work,
         // so the state still says RUNNING while the Run's own totals sit in the buffer.
-        val lost = runLostToTeardown(SessionStatus.RUNNING, null, listOf(heldSample(1), heldFinalize))
+        val lost = runLostToTeardown(RunLifecycle.RUNNING, null, listOf(heldSample(1), heldFinalize))
                 as RunLostToTeardown.AwaitingItsRow
 
         assertTrue(lost.runnerStopped)
@@ -165,7 +164,7 @@ class RunLostToTeardownTest {
 
     @Test
     fun `a Run with a row always has something to save`() {
-        assertTrue(runLostToTeardown(SessionStatus.RUNNING, 9133L)!!.hasSomethingToSave)
+        assertTrue(runLostToTeardown(RunLifecycle.RUNNING, 9133L)!!.hasSomethingToSave)
     }
 
     @Test
@@ -174,14 +173,14 @@ class RunLostToTeardownTest {
         // with held work from a later one. A Run whose row landed reads as a Run with a row —
         // never as a Run awaiting one whose buffer has since been emptied, which would tell its
         // runner nothing was recorded while that very row was being rescued behind them.
-        val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
+        val landed = RunAtLastDispatch(RunLifecycle.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
 
         assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, heldWorkTakenHere = true))
     }
 
     @Test
     fun `a Run still holding its seconds reads as one awaiting its row`() {
-        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+        val awaiting = RunAtLastDispatch(RunLifecycle.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
         assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting, heldWorkTakenHere = true))
     }
@@ -193,7 +192,7 @@ class RunLostToTeardownTest {
 
     @Test
     fun `a teardown that took the claim on the buffer settles the Run that was holding it`() {
-        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+        val awaiting = RunAtLastDispatch(RunLifecycle.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
         val lost = runLostToTeardown(awaiting, heldWorkTakenHere = true)
                 as RunLostToTeardown.AwaitingItsRow
@@ -206,7 +205,7 @@ class RunLostToTeardownTest {
         // The session inbox took the buffer first and is emptying it. Delivered from both sides,
         // every second the Run recorded would be written down twice and the rescue would rebuild
         // inflated totals from the duplicates (#360).
-        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+        val awaiting = RunAtLastDispatch(RunLifecycle.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
         val lost = runLostToTeardown(awaiting, heldWorkTakenHere = false)
                 as RunLostToTeardown.AwaitingItsRow
@@ -219,7 +218,7 @@ class RunLostToTeardownTest {
         // The same claim as for a recording Run, and only one side may win it: the loser here is
         // the teardown, and the session inbox delivers the Run's own finalize (#360).
         val stopping = RunAtLastDispatch(
-            SessionStatus.STOPPING,
+            RunLifecycle.STOPPING,
             liveRunRowId = null,
             heldWork = listOf(heldSample(1), heldFinalize),
         )
@@ -246,7 +245,7 @@ class RunLostToTeardownTest {
 
         val lost = runLostToTeardown(
             RunAtLastDispatch(
-                status = SessionStatus.STOPPING,
+                status = RunLifecycle.STOPPING,
                 liveRunRowId = null,
                 heldWork = driver.state.pendingRowEffects,
             ),
@@ -262,7 +261,7 @@ class RunLostToTeardownTest {
     fun `a Run that already has a row is nothing for the session thread to be holding`() {
         // Its seconds went to the database as it ran; there is no buffer for two deliverers to
         // race over, so a lost claim changes nothing about it (#309).
-        val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
+        val landed = RunAtLastDispatch(RunLifecycle.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
 
         assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, heldWorkTakenHere = false))
     }
