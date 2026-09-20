@@ -176,8 +176,9 @@ data class PlanTest(
 
 /**
  * What kind of work a Workout is (#173) — the thing that makes two Workouts differ in kind rather
- * than only in length. Stage 1 offers one of each and the runner picks; the later stages, which
- * are locked and still shaped as they were, only declare what they already are.
+ * than only in length. No Stage is obliged to offer one of each, and none is held to one of a kind:
+ * stage 1 offers exactly one of each, stage 2 a Long, an Easy and two Quality (#510), and stage 3
+ * two Quality and nothing else (#511).
  */
 enum class RunType {
     /** Endurance, built from long run Intervals with short walks between them. */
@@ -186,7 +187,14 @@ enum class RunType {
     /** Continuous and unhurried: one repeat, no walk. */
     EASY,
 
-    /** The hard day, whatever its shape — Stage 1 spends it on strides after a long easy warm-up. */
+    /**
+     * The hard day, whatever its shape — strides on stage 1, pace intervals on stage 2, threshold
+     * intervals on stage 3, and every Test.
+     *
+     * A Stage may hold more than one: stages 2 and 3 each offer a hard session and a Test, and both
+     * are this kind. So nothing may read "the Stage's Quality Workout" as though it were singular —
+     * ask [PlanStage.testWorkout] for the Test, and match on the Workout's own id otherwise.
+     */
     QUALITY
 }
 
@@ -195,16 +203,17 @@ enum class RunType {
  *
  * The Long Run only, because it is the one session where the judgement is genuinely worth making:
  * whether this week's endurance run goes from 30 minutes of running to 36 depends on how the last
- * few went. The Easy Run is a fixed continuous stretch and the Quality Run a fixed set of strides —
- * both are recorded in full and count toward history and the 30-day load, and neither is adjusted.
+ * few went. The Easy Run is a fixed continuous stretch and the Quality Run a fixed set of intervals
+ * — both are recorded in full and count toward history and the 30-day load, and neither is adjusted.
  *
  * This replaces asking whether the last Run had walk Intervals, a proxy that fails in both
  * directions once a Stage offers one Workout of each kind: a continuous Easy Run would be skipped
  * for having no walks, and a Quality Run *would* be evaluated — so the coach would start adjusting
  * the one session that most wants leaving alone.
  *
- * Accepted gap: the Quality Run never progresses on its own. Taking it from six strides toward
- * eight is a static rule for its own ticket, and an AI does not belong in it.
+ * Accepted gap: the Quality Run never progresses on its own. Taking stage 1 from six strides toward
+ * eight, or stage 2's Pace Intervals from five repeats toward six, is a static rule for its own
+ * ticket (#512), and an AI does not belong in it.
  */
 val RunType.isCoachAdjusted: Boolean get() = this == RunType.LONG
 
@@ -439,6 +448,40 @@ object TrainingPlanProvider {
                     workouts = listOf(
                         WorkoutTemplate("w2_s1", "Pace Stabilization", 2, 600, 60, 4, runType = RunType.LONG),
                         WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1, runType = RunType.EASY),
+                        // The stage's hard day (#510). Until it existed the stage's only QUALITY
+                        // Workout was the Test below, which the app prompts once in three weeks —
+                        // so for twenty days in twenty-one a runner on stage 2 was offered no hard
+                        // session at all, only the Long run and the Easy run above.
+                        //
+                        // Two minutes is the rep length the stage is for: the graduation is a sub-30
+                        // 5K, a pace neither Workout above ever asks for, and twenty seconds of
+                        // stride does not teach a pace that has to hold for half an hour. It is the
+                        // middle rung of the ladder — stage 1 strides at 6 x 20s, this at 5 x 2min,
+                        // stage 3 Threshold Intervals at 5 x 5min — and each is the same five
+                        // repeats at the next length up.
+                        //
+                        // Walk recovery equal to the rep, rather than stage 1's "full recovery"
+                        // 90s after 20s, because the point here is to start each rep tired enough
+                        // that the pace is the work.
+                        //
+                        // Listed before the Test so the stage reads Long, Easy, Quality, Test, and
+                        // the Test stays at the end where a Workout that is only occasionally due
+                        // belongs. The first Workout is unchanged, so [pickedOrFirst] still falls
+                        // back to Pace Stabilization.
+                        //
+                        // Fixed at five repeats for ever — a Quality Workout has no progression
+                        // rule anywhere in the plan (#512), and this Workout does not invent one.
+                        WorkoutTemplate(
+                            id = "w2_quality",
+                            title = "Pace Intervals",
+                            targetZone = 4,
+                            runDurationSeconds = 120,
+                            walkDurationSeconds = 120,
+                            totalRepeats = 5,
+                            warmUpSeconds = 600,
+                            coolDownSeconds = 300,
+                            runType = RunType.QUALITY
+                        ),
                         // The stage graduates on a 5K and until now offered no way to attempt one
                         // (#291): its Long run walks a minute in four, and a walk break inside a
                         // Best Effort counts against it, so a sub-30 5K in there needed a pace the
@@ -604,6 +647,12 @@ object TrainingPlanProvider {
      * Null when the Stage offers nothing of that kind — stage 3 offers no Long run — or when no plan
      * is attached. Not "the nearest Workout": a Prescription reasoned about a Long Run and floored at
      * a stride session is a shape nobody wrote.
+     *
+     * The Stage's *first* of that kind, which only matters for QUALITY, since a Stage can hold two
+     * of those (#510) — its hard session and its Test. First means the hard session, because a
+     * Stage lists its Test last and a floor taken from a Test would be a flat-out 5K. Only the Long
+     * Run reaches this in production either way ([isCoachAdjusted]), so nothing today asks it for a
+     * Quality Workout at all.
      */
     fun resolveWorkoutOfType(
         planId: String?,

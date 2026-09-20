@@ -139,10 +139,26 @@ been the Test a Run has to cover the Requirement's distance, or failing that
 last nine tenths of the Workout's own length.
 _Avoid_: time trial, assessment, benchmark
 
+**Hard Session**:
+The Quality Workout of a Stage that is not its Test — the one hard day a runner
+can pick on any day of the Stage, as against a Test, which the app asks for once
+in three weeks. Every Stage has exactly one: Strides on stage 1, Pace Intervals
+on stage 2, Threshold Intervals on stage 3. All three are the same five or six
+repeats at the next length up, and the stage's own graduation says which length:
+stage 2 has to reach a pace it can hold for half an hour, so its Intervals are
+two minutes and not twenty seconds. The shape is fixed by the plan and moves for
+nothing — the coach adjusts the Long Run alone
+([ADR 0006](docs/adr/0006-the-coach-adjusts-the-long-run-only.md)), and no Hard
+Session grows with the weeks (#512).
+_Avoid_: speed work, quality session (**Quality** is the Run Type, which the
+Test is too), and rep — see **Interval**
+
 **Run Type**:
-What kind of work a Workout is: Long, Easy, or Quality. The Stage offers one of
-each and the runner chooses; it is what makes two Workouts different in kind
-rather than only in length.
+What kind of work a Workout is: Long, Easy, or Quality. It is what makes two
+Workouts different in kind rather than only in length. A Stage offers what it
+offers and the runner chooses: no Stage owes one of every kind, and no Stage is
+held to one of a kind — a Stage with a Test holds two Quality Workouts, its Hard
+Session and the Test, so "the Stage's Quality Workout" names nothing (#510).
 A *recorded* Run holds no Run Type of its own — it holds the Stage and the
 Workout it was started under, and the Run Type is recovered from those, once,
 by `TrainingPlanProvider.runTypeOfRecordedRun`. A recorded Run can therefore
