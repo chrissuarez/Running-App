@@ -5,6 +5,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -447,5 +448,87 @@ class TrainingPlanModelsTest {
         val stageOne = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages.first()
 
         assertNull(stageOne.testWorkout)
+    }
+
+    /** Every QUALITY Workout of a Stage except its Test — see the Hard Session (#510). */
+    private fun PlanStage.hardSessions(): List<WorkoutTemplate> =
+        workouts.filter { it.runType == RunType.QUALITY && !it.isTest }
+
+    @Test
+    fun `every stage offers one hard session that is not its test`() {
+        // The fault this fixes: stage 2's only QUALITY Workout was its Test, and a Test is prompted
+        // once in three weeks — so on twenty days in twenty-one the stage offered no hard day at
+        // all (#510). A Test does not count as one, which is the whole of what this asserts.
+        val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
+
+        stages.forEach { stage ->
+            val hard = stage.hardSessions().single()
+            assertNotSame(stage.testWorkout, hard)
+            // Pickable on any day, so it carries a real envelope — unlike a Test, which has none.
+            assertTrue(hard.warmUpSeconds > 0)
+            assertTrue(hard.coolDownSeconds > 0)
+            // And it is intervals, so there is a walk to recover in.
+            assertTrue(hard.totalRepeats > 1)
+            assertTrue(hard.walkDurationSeconds > 0)
+        }
+    }
+
+    @Test
+    fun `the hard sessions are one ladder, each rung a longer effort`() {
+        // What makes the three a progression is the length of the effort, not the count of them:
+        // 6 x 20s, then 5 x 2min, then 5 x 5min. A stage's own graduation sets the rung — stage 2
+        // has to hold a sub-30 5K pace for half an hour, which twenty seconds cannot teach (#510).
+        val hard = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
+            .map { it.hardSessions().single() }
+
+        assertEquals(listOf("Strides", "Pace Intervals", "Threshold Intervals"), hard.map { it.title })
+        assertEquals(listOf(20, 120, 300), hard.map { it.runDurationSeconds })
+        hard.zipWithNext { earlier, later ->
+            assertTrue(
+                "${later.title} must ask for a longer effort than ${earlier.title}",
+                later.runDurationSeconds > earlier.runDurationSeconds
+            )
+        }
+    }
+
+    @Test
+    fun `stage 2 offers pace intervals before its test, and still falls back to the long run`() {
+        // Order is load-bearing twice over: pickedOrFirst falls back to the Stage's *first*
+        // Workout, which must stay the Long run; and resolveWorkoutOfType takes the *first* of a
+        // kind, so a QUALITY floor must land on the hard session rather than a flat-out 5K (#510).
+        val stageTwo = TrainingPlanProvider.resolveActiveStage("5k_sub_25", "sub_30_bridge")!!
+
+        assertEquals(
+            listOf("w2_s1", "w2_s2", "w2_quality", "w2_s3"),
+            stageTwo.workouts.map { it.id }
+        )
+        assertEquals("w2_s1", stageTwo.workouts.pickedOrFirst(null)?.id)
+        assertEquals(
+            "w2_quality",
+            TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "sub_30_bridge", RunType.QUALITY)?.id
+        )
+        assertEquals("w2_s3", stageTwo.testWorkout?.id)
+    }
+
+    @Test
+    fun `pace intervals are five two-minute efforts in zone 4, and say nothing extra`() {
+        val paceIntervals =
+            TrainingPlanProvider.resolvePickedWorkout("5k_sub_25", "sub_30_bridge", "w2_quality")!!
+
+        assertEquals("Pace Intervals", paceIntervals.title)
+        assertEquals(4, paceIntervals.targetZone)
+        assertEquals(120, paceIntervals.runDurationSeconds)
+        // Recovery as long as the effort, so each rep starts a little tired — that is the work.
+        assertEquals(120, paceIntervals.walkDurationSeconds)
+        assertEquals(5, paceIntervals.totalRepeats)
+        assertEquals(600, paceIntervals.warmUpSeconds)
+        assertEquals(300, paceIntervals.coolDownSeconds)
+        assertEquals(RunType.QUALITY, paceIntervals.runType)
+        // Not a Test: it answers no Requirement and the three-week prompt must never name it.
+        assertFalse(paceIntervals.isTest)
+        // Its numbers say the whole of it, unlike a Test, which hides a decision about the console.
+        assertNull(paceIntervals.instruction)
+        // And the coach leaves it alone, as it leaves every hard day alone (ADR 0006).
+        assertFalse(paceIntervals.runType.isCoachAdjusted)
     }
 }

@@ -174,11 +174,12 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 16 September 2026</div>
+    <div class="kicker">Handbook · updated 20 September 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>Stage 2 now has a hard session of its own.</strong> Until now the only hard workout stage 2 offered was the <strong>5K Test</strong> &mdash; and the app only asks for a test once every three weeks, so on the other twenty days there was nothing hard on the card at all, only the Long run and the Easy run. Stage 2 now offers <strong>Pace Intervals</strong> as well: ten minutes to warm up, five efforts of two minutes with two minutes of walking after each, and five minutes to cool down. About thirty-five minutes. Two minutes rather than stage 1&rsquo;s twenty-second strides, because this stage asks you for a 5K under thirty minutes and that is a pace you have to hold, not a flick of speed. It sits on the card as a third choice, before the test, and the workout the app falls back to is unchanged. Both it and the test are marked <strong>Quality</strong>, so the titles are what tell them apart. It never gets bigger: five efforts stay five efforts, and what moves you on is passing the test. See <em>Your hard session</em> in <a href="#plan">the training plan</a>.</p>
       <p><strong>Missing weather is asked for again each time you come back to the app.</strong> A run saved with no signal has no weather line until the app can look it up. The app used to ask only once each time it started fresh, so if your phone was offline at that moment, it did not ask again until your phone next closed the app fully &mdash; and a phone can keep the app open for hours. Now it asks every time you bring the app to the front. Get home, open the app, and the missing lines fill in behind whatever you are doing. See <em>The weather you ran in</em> in <a href="#runpage">the run&rsquo;s page</a>.</p>
       <p><strong>You now pick a route by looking at it.</strong> <strong>Choose a route</strong> used to open a list of names, so you could not tell which course was which. It now opens your <strong>Routes</strong> screen instead &mdash; the same one as <strong>Open Routes</strong>, with each route&rsquo;s shape and its families of lengths. The courses nearest today&rsquo;s distance come first, and <strong>No route</strong> sits at the top. Tap a route to open its page: the map with its arrows, the distance, the climb and your past runs on it. On a family, pick the length with the chips. Then tap <strong>Run this route</strong> and you are back on the home screen with it picked. Nothing can be deleted or changed from here &mdash; that stays under <strong>Open Routes</strong>. The <strong>Route</strong> card on the home screen now shows the shape of the route you picked, too. See <em>Following a route</em> in <a href="#before">before a run</a>.</p>
       <p><strong>&ldquo;Turn left.&rdquo; now comes just before the corner, not after it.</strong> On a walk down the far side of a road, the app said &ldquo;Turn right.&rdquo; some fourteen seconds after you had reached the corner &mdash; you were already turning. The app works out where you are along the route&rsquo;s line, and from the far pavement you reach the real corner before your spot on the line does. So it now says the turn about <strong>15 m</strong> before the bend, which covers the far pavement and the moment the sentence takes to say. &ldquo;Turn left in 50 metres.&rdquo; still comes 50 m out, as before. If that warning is still waiting its turn when &ldquo;Turn left.&rdquo; is due, it is dropped, so you never hear the two the wrong way round. See <em>Which way the course turns</em> in <a href="#routes">routes</a>.</p>
@@ -760,9 +761,21 @@
       </div>
 
       <div class="e">
+        <h3>Your hard session</h3>
+        <p>Every stage offers you a few workouts to choose between, and one of them is the hard one. Which it is depends on the stage you are standing in, and all three are built the same way &mdash; a warm-up, then a handful of hard efforts with a walk between each, then a cool-down.</p>
+        <p><strong>Stage 1 &mdash; Strides.</strong> Twenty minutes easy first, then six efforts of twenty seconds, ninety seconds of walking after each, and three minutes to cool down. The efforts are short on purpose: the long easy start is most of the session, and the strides are there to remind your legs what quick feels like.</p>
+        <p><strong>Stage 2 &mdash; Pace Intervals.</strong> Ten minutes to warm up, then five efforts of two minutes with two minutes of walking after each, and five minutes to cool down. About thirty-five minutes all in. Two minutes rather than twenty seconds because of what this stage asks of you: a 5K under thirty minutes is a pace you have to hold for half an hour, and twenty seconds never teaches that. The walk is as long as the effort, so you begin each one a little tired &mdash; which is the point.</p>
+        <p><strong>Stage 3 &mdash; Threshold Intervals.</strong> Five efforts of five minutes, two minutes of walking after each. The same five efforts again, at the next length up.</p>
+        <p class="note"><b>The hard session and the test are not the same thing.</b> Both are marked <strong>Quality</strong> on the card, so on stages 2 and 3 you will see two Quality lines and the titles are what tell them apart. The hard session is yours to pick on any day you fancy it. The test is the 5K that answers the stage &mdash; the app asks for that one every three weeks. See <em>Tests</em>, just below.</p>
+        <p class="note"><b>It never gets bigger.</b> Five efforts stay five efforts for as long as you are on the stage. What moves you on is passing the test, not grinding out more efforts &mdash; and the AI coach is fenced out of this session entirely. It adjusts your Long run and nothing else.</p>
+        <div class="where"><b>Where</b> Home &rarr; today's card &rarr; the workout marked <strong>Quality</strong></div>
+      </div>
+
+      <div class="e">
         <h3>Tests</h3>
         <p>The one workout that exists to answer a stage's requirement: a 5K flat out, no warm-up or cool-down wrapped round it. The app says one is due three weeks after the last, and holds off while your form is low.</p>
         <p>It is a prompt, never a gate — the test stays pickable whether the app has asked for it or not.</p>
+        <p class="note"><b>It is not your hard session for the week.</b> A test comes round once in three weeks, so on the twenty days between them the hard session above is the hard one &mdash; not the test. Both sit on the card together.</p>
       </div>
 
       <div class="e">
@@ -1192,7 +1205,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>16 September 2026</strong>. Missing weather is now asked for again each time you come back to the app. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>20 September 2026</strong>. Stage 2 now has a hard session of its own, Pace Intervals. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
