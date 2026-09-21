@@ -56,7 +56,7 @@ data class StageWeek(
  * their block is only just beginning.
  *
  * So the counting is done here rather than left to the model. What the coach is handed is a fact the
- * app measured — the same Runs the graduation guard would accept as evidence, counted — and the
+ * app measured — the same Runs a graduation may rest on, counted — and the
  * judgement it is asked for is the one the plan actually leaves open: whether that record is
  * *consistent*. See
  * [ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md), which
@@ -134,7 +134,7 @@ data class StageTrainingRecord(
  *
  * [days] is one entry per qualifying Run — the Stage's own structured, non-Walk, shareable Runs, as
  * chosen by `getAiEvidenceRunDaysOfStage`. Which Runs qualify is decided in the query rather than
- * here, so the count and the graduation guard's own filter cannot drift apart.
+ * here, so the count and the filter that picks a graduation's candidates cannot drift apart.
  *
  * A Run dated further ahead than any clock could put it is dropped, exactly as [weeklyVolumeOf]
  * drops one: a phone whose clock has slipped by months must not add empty months to the record and

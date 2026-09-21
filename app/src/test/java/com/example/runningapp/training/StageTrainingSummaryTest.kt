@@ -136,11 +136,15 @@ class StageTrainingSummaryTest {
     }
 
     @Test
-    fun `the coach is named as the judge of the rest, and nothing is offered`() {
+    fun `the rest is named as somebody else's judgement, and nothing is offered`() {
+        // Not the coach any more (#514, ADR 0023): the coach writes the debrief and decides nothing
+        // about a Stage. Said as "the app", because which model answers it is not the runner's
+        // business — what they need to know is that the card is not the thing deciding.
         val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)!!
 
         assertNotNull(summary.judgementLine)
-        assertTrue(summary.judgementLine!!.contains("coach"))
+        assertTrue(summary.judgementLine!!.contains("The app judges whether that training has been consistent"))
+        assertFalse(summary.judgementLine!!.contains("coach"))
         // A statement, never an offer: the card may not read as a graduation about to be handed
         // over (ADR 0016).
         val everything = summary.headline + " " + summary.judgementLine + " " + summary.countedLine

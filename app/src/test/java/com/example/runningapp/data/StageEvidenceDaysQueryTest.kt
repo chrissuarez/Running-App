@@ -12,7 +12,7 @@ import org.junit.Test
  * The query behind the Stage's training record (#289) — `getAiEvidenceRunDaysOfStage` — against a
  * real SQLite database held in memory.
  *
- * What it has to prove is that this query and the graduation guard agree about what a *qualifying*
+ * What it has to prove is that this query and the graduation agree about what a *qualifying*
  * Run is. The guard asks `SessionRepository.isStageEvidence` of the three Runs the coach was shown;
  * this asks the same question of the whole Stage, in SQL. Two filters written in two languages is
  * exactly the pair that drifts, and the drift would be a count telling the coach a Stage holds

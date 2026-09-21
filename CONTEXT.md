@@ -48,8 +48,10 @@ What a Stage asks for before it will be let go of. Always written in prose for
 the runner to read, and sometimes also in numbers — a Best Effort at a record
 distance, in a time. Where it is written in numbers the app measures it and
 decides it, and the coach is fenced out of it entirely; where it holds a
-judgement, such as "4 weeks of consistent Zone 2 training", the coach decides
-([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
+judgement, such as "4 weeks of consistent Zone 2 training", the **Graduation
+Judge** decides
+([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md),
+[ADR 0023](docs/adr/0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md)).
 A requirement written in numbers is answered by any finished Run that is not a
 Walk, whichever kind of session it was — an Open Run included, because a time is
 a time wherever it turned up. It is asked once the runner can no longer change
@@ -70,8 +72,9 @@ target), unlock condition
 What the app has recorded under the Stage the runner is in, counted week by week
 and handed to the coach as a fact (#289). Only qualifying Runs are in it: a
 structured Run recorded under that Stage that the runner did not mark a Walk and
-did not keep from the coach — the same Runs a graduation may rest on, and the
-same test the graduation guard applies to the three Runs the coach is shown. A
+did not keep from the coach — the same Runs a graduation may rest on. The same
+test picks which of the three Runs the coach is shown are put to the Graduation
+Judge. A
 week nobody ran in is a week counted as nought, because an empty week is the
 half of "consistent" a total cannot say. It exists because the coach is shown
 only the Stage's last three sessions of any kind, so a requirement written in
@@ -80,11 +83,28 @@ weeks into a block that it was only just beginning. How long the training has
 run is measured in whole seven-day weeks gone by since the first qualifying Run, never
 in the number of Monday-starting rows: a Sunday start puts four rows on the list
 a fortnight in, and nothing in the app takes a graduation back. The app counts; whether
-the count is *consistent* stays the coach's judgement
+the count is *consistent* stays the Graduation Judge's
 ([ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md)).
 _Avoid_: training history (the whole record book, across every Stage), streak,
 weekly volume (the bars on the Progress screen, which count every Run and are
 never evidence)
+
+**Graduation Judge**:
+Who answers whether a Stage Requirement that holds a judgement has been met. One
+typed yes-or-no question per candidate Run, keyed by that Run's own database id,
+answered with a calibrated probability rather than with text
+([ADR 0023](docs/adr/0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md)).
+It is asked before the coach writes anything, and the coach is then told the
+answer as a fact — so the debrief can say "you have finished this Stage" without
+the coach having any say in whether that is true. It is never asked about a Walk,
+an Open Run or a Requirement stated in numbers, so there is nothing for a rule to
+forbid. A judge that cannot be reached ends the whole evaluation; a judge that
+says no is an ordinary answer and the evaluation carries on.
+_Avoid_: graduation guard, evidence naming, naming the evidence (all three named
+the apparatus this replaced — the coach set a flag, copied timestamps back as its
+evidence, and the app resolved every name; none of that exists). Do not say the
+**coach** decides a graduation: the coach writes the debrief and prescribes the
+intervals, and decides nothing about a Stage.
 
 **Plan Completion**:
 The runner finishing a whole Plan: they cleared the last Stage's Requirement and

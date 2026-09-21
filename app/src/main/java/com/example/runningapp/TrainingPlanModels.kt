@@ -26,7 +26,7 @@ data class TrainingPlan(
  * edges this rule needs, so it borrows them rather than restating them and drifting.
  *
  * Not every requirement can have one. "4 weeks of consistent Zone 2 training" holds a genuine
- * judgement — what counts as consistent — and stays with the coach.
+ * judgement — what counts as consistent — and stays with the Graduation Judge (ADR 0023).
  */
 data class BestEffortRequirement(
     /** One of the five distances contested as a Best Effort — [RecordType.bestEffortDistances]. */
@@ -86,7 +86,7 @@ data class PlanStage(
      * this plan already pays for the number in [bestEffortRequirement].
      *
      * **It grants nothing.** The count this feeds is a statement of what has been recorded; whether
-     * that training was *consistent* stays with the coach (ADR 0019), and graduation still looks
+     * that training was *consistent* stays with the Graduation Judge (ADR 0019, 0023), and graduation still looks
      * forwards only (ADR 0016).
      */
     val weeksRequirement: Int? = null,
@@ -392,7 +392,7 @@ object TrainingPlanProvider {
                     description = "Focus on building aerobic capacity and consistency.",
                     graduationRequirementText = "Complete 4 weeks of consistent Zone 2 training.",
                     // The half of that sentence the app measures (#445). "Consistent" is the other
-                    // half and stays with the coach.
+                    // half and stays with the Graduation Judge.
                     weeksRequirement = 4,
                     // One Workout of each Run Type (#173) — the week lives inside the stage, and the
                     // runner picks which of the three they are doing today.

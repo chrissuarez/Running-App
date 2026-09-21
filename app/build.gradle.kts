@@ -16,6 +16,8 @@ val geminiApiKey = localProperties.getProperty("GEMINI_API_KEY", "")
     .replace("\"", "\\\"")
 val mapboxAccessToken = localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")
     .replace("\"", "\\\"")
+val typeSafeApiKey = localProperties.getProperty("TYPESAFE_API_KEY", "")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.example.runningapp"
@@ -35,6 +37,7 @@ android {
         versionName = "1.0"
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
         buildConfigField("String", "MAPBOX_ACCESS_TOKEN", "\"$mapboxAccessToken\"")
+        buildConfigField("String", "TYPESAFE_API_KEY", "\"$typeSafeApiKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
