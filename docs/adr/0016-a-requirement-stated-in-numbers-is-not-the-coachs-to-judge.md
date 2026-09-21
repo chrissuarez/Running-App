@@ -19,7 +19,11 @@ is told in the prompt that it may not graduate, and `evaluateAndAdjustPlan` refu
 from it outright: a prompt sentence is a promise the code has to keep, and the two paths must never
 both be able to grant.
 
-Stage 1's "4 weeks of consistent Zone 2 training" keeps its prose and stays with the coach. What
+Stage 1's "4 weeks of consistent Zone 2 training" keeps its prose and stays with the model — with
+the **Graduation Judge** since
+[ADR 0023](./0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md), which moved that
+decision off the coach and made it a typed judgement. What this ADR decides is unchanged: a
+requirement written in numbers is the app's, and such a Stage is never put to a model at all. What
 counts as *consistent* is a real judgement, and writing one in code is a different decision from
 this one.
 

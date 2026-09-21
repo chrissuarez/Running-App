@@ -12,6 +12,8 @@ import com.example.runningapp.archive.RunArchiveContents
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.AfterRunWorker
 import com.example.runningapp.data.AiCoachClient
+import com.example.runningapp.data.StageGraduationJudge
+import com.example.runningapp.data.TypeSafeGraduationJudge
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
@@ -143,6 +145,18 @@ class AppContainer(context: Context) {
 
     val aiCoachClient: AiCoachClient by lazy {
         AiCoachClient()
+    }
+
+    /**
+     * Who answers whether a Stage's requirement has been met (#514) — TypeSafe's System One, asked
+     * one typed question per candidate Run.
+     *
+     * A missing TYPESAFE_API_KEY is not fatal and is not checked here: the judge reports itself
+     * unaskable, no Stage graduates, and the coach goes on writing debriefs. Same bargain as
+     * GEMINI_API_KEY and MAPBOX_ACCESS_TOKEN — kept out of git in local.properties.
+     */
+    val graduationJudge: StageGraduationJudge by lazy {
+        TypeSafeGraduationJudge()
     }
 
     val weatherClient: WeatherClient by lazy {
@@ -294,6 +308,7 @@ class AppContainer(context: Context) {
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
+            graduationJudge = graduationJudge,
             weatherClient = weatherClient,
             refreshHistoryBackup = refreshHistoryBackup,
             // The durable version of refreshHistoryBackup, for the rescue that finishes a Run whose

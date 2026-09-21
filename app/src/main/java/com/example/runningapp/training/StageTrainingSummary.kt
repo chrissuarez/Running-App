@@ -85,7 +85,7 @@ data class StageTrainingSummary(
  * rule in the body — and the Desk Test plan's *"Complete 2 short run/walk repeats"* is a judgement
  * about something this does not measure either.
  *
- * [record] must be built from `SessionDao.getAiEvidenceRunDaysOfStage` — the graduation guard's own
+ * [record] must be built from `SessionDao.getAiEvidenceRunDaysOfStage` — the graduation's own
  * filter — and never from a wider read. Two doors that answer "how many weeks" have to be fed the
  * same numbers, or one of them is misleading the runner about a promotion the app itself will never
  * reverse. The runner can move back by hand (ADR 0020, #235), which is a repair and not a reason to
@@ -150,7 +150,7 @@ fun stageTrainingSummaryOf(
             "Each column is a week — the oldest on the left, this week on the right."
         },
         judgementLine =
-            "Your coach judges whether that training has been consistent, after a Long Run.",
+            "The app judges whether that training has been consistent, after a Long Run.",
         countedLine = countedLine,
     )
 }

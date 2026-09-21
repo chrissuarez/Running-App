@@ -61,7 +61,7 @@ The three alternatives, and why not:
 ## A qualifying Run is the same Run a graduation may rest on
 
 Stated once, in `SessionRepository.isStageEvidence`: a structured Run, recorded under this Stage,
-that the runner did not mark a Walk and did not keep from the coach. The graduation guard asks it of
+that the runner did not mark a Walk and did not keep from the coach. The graduation asks it of
 the three Runs the coach was shown (#287); the record asks it of the whole Stage. Two answers to
 that question would be a count telling the coach a Stage holds evidence the guard then refuses to
 graduate on.
@@ -73,8 +73,10 @@ Run into a Walk and never back.
 
 ## What is still fenced
 
-- **The record names no Runs.** A graduation still names timestamps out of the three Runs shown,
-  because those are the only rows a name can be resolved against (#287). A date from the record
+- **The record names no Runs.** ~~A graduation still names timestamps out of the three Runs shown.~~
+  Superseded by [ADR 0023](./0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md): there
+  is no naming any more. The judge is asked one question per Run under that Run's own database id,
+  so nothing is copied out of a prompt and nothing has to be resolved back.
   resolves to nothing and would refuse a graduation the runner earned.
 - **It counts and measures nothing.** It carries a date per Run and nothing else — no heart rate, no
   zone, no distance, no duration — so it can never answer a requirement written as a distance in a

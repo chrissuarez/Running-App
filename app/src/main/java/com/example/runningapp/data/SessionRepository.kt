@@ -163,10 +163,10 @@ private const val AI_LABEL_OPEN_RUN = "Open Run"
  * that happened to follow the Workout's structure did not *complete* it, so it must not reach the
  * coach described as one.
  *
- * The prompt is told what this means and told not to graduate a Stage on it. Nothing enforces that
- * by reading this string back — [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] is what the
- * refusal is made of, because a graduation cannot be taken back and a label written for a prompt
- * would stop refusing the moment somebody reworded it.
+ * The prompt is told what this means. Nothing enforces it by reading this string back —
+ * [AiTrainingContext.requirementEvidenceRuns] is what the refusal is made of, because a graduation
+ * cannot be taken back and a label written for a prompt would stop refusing the moment somebody
+ * reworded it. A Walk is simply never one of the Runs the judge is asked about (#514).
  */
 private const val AI_LABEL_WALK = "Walk"
 
@@ -374,8 +374,8 @@ data class AiGoal(
  * Whether this Run, as the runner has left it, is one this Stage could be graduated on (#289).
  *
  * The rule stated once, because two places ask it and a Stage graduated on evidence the other would
- * have refused is exactly what asking it twice buys. The graduation guard asks it of the three Runs
- * the coach was shown ([AiTrainingContext.requirementEvidenceRunIdsByTimestamp]); the Stage's
+ * have refused is exactly what asking it twice buys. The graduation asks it of the three Runs the
+ * coach was shown ([AiTrainingContext.requirementEvidenceRuns]); the Stage's
  * training record asks it of the Run that has just finished, to correct a stored row the finish
  * sheet has since overtaken.
  *
@@ -439,8 +439,7 @@ data class AiTrainingContext(
     /**
      * Which of [sourceRunIds] may answer the Stage's requirement — the structured `Run/Walk`
      * sessions among them, so neither a Walk (#275) nor an unplanned Open Run can stand for one —
-     * keyed by the [AiRecentRun.timestamp] the coach was shown for each, so a reply naming one can
-     * be resolved back to the Run it named (#287).
+     * paired with the numbers the judge is shown for each (#514).
      *
      * A separate list from [sourceRunIds] because the two answer different questions. That one is
      * "what was this reply reasoned from", which every Run shown was, Walks included — a week of
@@ -452,11 +451,14 @@ data class AiTrainingContext(
      * be taken back and a label built for a prompt is not a thing to hang one on: reworded, the
      * check would silently stop refusing.
      *
-     * Keyed by timestamp rather than listed, because the question this has to answer is not "was
-     * there evidence" but "was *this* the evidence" — see [evidenceRunIdsNamedBy] and
-     * [AiCoachResponse.graduationEvidenceRunTimestamps].
+     * **This is the list of Runs the judge is asked about, and it is the only list.** A Walk or an
+     * Open Run is never in a question, so there is no rule needed to forbid answering from one, and
+     * nothing to check afterwards. What replaced a whole apparatus — a map keyed by the timestamp
+     * the coach was shown, a reply naming timestamps back digit for digit, an all-or-nothing resolve
+     * of those names, and the ambiguity of two Runs sharing a start — is that the question carries
+     * the app's own id and so does the answer (#287, #514).
      */
-    val requirementEvidenceRunIdsByTimestamp: Map<Long, Long> = emptyMap(),
+    val requirementEvidenceRuns: List<GraduationCandidate> = emptyList(),
     /**
      * Null when there is no scored history to read it from — a new phone, or a runner who has never
      * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
@@ -504,14 +506,15 @@ data class AiTrainingContext(
      * reads as a Stage only just beginning, which is what the runner is told on the home screen.
      *
      * This is a count and not a judgement: the app says how many qualifying Runs fell in each week,
-     * and whether that is *consistent* stays with the coach, which is the part of the requirement
+     * and whether that is *consistent* stays with the judge, which is the part of the requirement
      * that genuinely holds a judgement ([BestEffortRequirement]).
      *
      * Unlike the weekly Effort totals in [fitnessAndForm], it is deliberately **not** fenced out of
-     * the graduation: it counts the very Runs the graduation guard accepts as evidence
-     * ([isStageEvidence], asked of the whole Stage), measured by the app rather than estimated by
-     * the model. What stays fenced is the naming — a graduation must still name Runs out of
-     * [recentRuns], because those are the only rows a name can be resolved against (#287).
+     * the graduation: it counts the very Runs a graduation may rest on ([isStageEvidence], asked of
+     * the whole Stage), measured by the app rather than estimated by the model. It travels in the
+     * judge's state beside each Run it is asked about (#514) — and the Runs asked about are still
+     * only those in [requirementEvidenceRuns], because those are the Runs whose numbers are there
+     * to judge.
      *
      * **The residue, named rather than hidden.** A Prescription stands on the Runs it was shown, and
      * deleting one of them unwinds it (ADR 0013, #156). The Runs counted here are not in
@@ -532,39 +535,21 @@ data class AiTrainingContext(
      */
     val stageTraining: StageTrainingRecord = StageTrainingRecord.NONE,
 ) {
-    /**
-     * The Runs the coach named as what it graduated the Stage on, or null when it named anything
-     * this Stage cannot be graduated on (#287).
-     *
-     * Null covers every way a name can fail, because they all end the same way — a refusal:
-     * - **Nothing named.** A graduation with no evidence behind it is worth no more than one whose
-     *   evidence is a Walk; the model omitting the field, sending an empty list, or sending
-     *   something that is not a list of numbers are all the same answer.
-     * - **A Run that cannot answer the Stage.** A Walk (#275) or an unplanned Open Run is shown to
-     *   the coach and is absent from this map, so naming one refuses itself. This is the whole point
-     *   of asking: a qualifying Run existing in the list must not license a graduation read off the
-     *   Walk beside it.
-     * - **A Run nobody was shown**, from a model that invented a number or reworked the one it was
-     *   given. There is nothing behind it to have graduated anything.
-     *
-     * All or nothing across the list, not the names that happen to resolve: a graduation resting on
-     * three Runs, one of them a Walk, is a graduation resting on a Walk. Keeping the two that
-     * resolved would grant it on evidence the coach itself did not think sufficient, which is the
-     * same substitution read from the other end.
-     *
-     * A timestamp that two of the Runs shown share is in the map for neither of them (see
-     * `getAiTrainingContext`), so it lands here as a name that resolves to nothing — and that is
-     * asked of every Run shown, not only of the ones that could answer the Stage, or a Walk sharing
-     * a start with a structured Run would hand the coach the Run's id under the Walk's number. An
-     * ambiguous name is not a name, and the doubt is settled the way every doubt on this path is
-     * settled: refuse, because a graduation cannot be taken back.
-     */
-    fun evidenceRunIdsNamedBy(response: AiCoachResponse): Set<Long>? {
-        val named = response.graduationEvidenceRunTimestamps?.takeIf { it.isNotEmpty() } ?: return null
-        return named
-            .map { timestamp -> requirementEvidenceRunIdsByTimestamp[timestamp] ?: return null }
-            .toSet()
-    }
+}
+
+/**
+ * What came back when the Stage's requirement was put to the judge (#514).
+ *
+ * [Unreachable] is not an empty [Judged]. An empty [Judged] is a judgement — these Runs do not meet
+ * the requirement — and the evaluation carries on under the Stage the runner is still in.
+ * [Unreachable] is no judgement at all, and the evaluation is thrown away rather than read as a no.
+ */
+private sealed interface GraduationVerdict {
+    /** The judge could not be reached. Nothing is written. */
+    object Unreachable : GraduationVerdict
+
+    /** The Runs that meet the requirement, which is empty far more often than not. */
+    data class Judged(val evidenceRunIds: Set<Long>) : GraduationVerdict
 }
 
 data class Max30dLoad(
@@ -693,6 +678,19 @@ class SessionRepository(
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
+    /**
+     * Who decides whether a Stage's requirement has been met (#514).
+     *
+     * Separate from [aiCoachClient] because they are two different jobs asked of two different
+     * services. The coach writes prose and prescribes intervals, which is what a generative model
+     * is right for. This answers one typed question per Run and returns a calibrated probability,
+     * which is what a decision that cannot be taken back needs.
+     *
+     * Null on every repository that was never given one, and a build with no key has a judge that
+     * cannot be asked: both mean no Stage is ever graduated, and neither stops the coach writing a
+     * debrief. See [judgeGraduation].
+     */
+    private val graduationJudge: StageGraduationJudge? = null,
     private val weatherClient: WeatherClient? = null,
     // Re-snapshots run history to the Downloads backup after a deletion. Without this a later
     // Clear-storage restore would bring back a stale snapshot that still holds the deleted runs, so
@@ -1504,8 +1502,8 @@ class SessionRepository(
      *
      * The same read the coach's own record is built from
      * ([SessionDao.getAiEvidenceRunDaysOfStage], counted by [stageTrainingRecordOf]) — one query,
-     * so the screen and the graduation guard cannot come to different answers about a promotion
-     * that cannot be taken back.
+     * so the screen and the graduation cannot come to different answers about a promotion that
+     * cannot be taken back.
      *
      * It differs from `getAiTrainingContext`'s copy in one way, and only one: there is no Run just
      * finishing here to put back the way the finish sheet left it. This is asked by a screen the
@@ -2415,7 +2413,7 @@ class SessionRepository(
      * A mark made *afterwards* — on the Run's own page, an hour or three weeks later — is a
      * different thing and is still never replayed, the same rule a Stated Distance is under (#231,
      * ADR 0008). What it buys is every evaluation after it, where
-     * [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] leaves the Run out. A Stage already
+     * [AiTrainingContext.requirementEvidenceRuns] leaves the Run out. A Stage already
      * graduated stays graduated.
      *
      * **The Segment-timing mark is lifted before the mark changes**, for the reason the scoring mark
@@ -3525,9 +3523,10 @@ class SessionRepository(
         // The Run that has just finished is put back the way the runner left it, exactly as it is
         // in the list above. The query reads stored rows, and the row this Run has *stored* can
         // still be the one written before the finish sheet was answered — so a Run the runner has
-        // just marked a Walk, or just opted out of sharing, would be counted here while the
-        // graduation guard beside it refuses to name it. That is a Walk becoming evidence by the
-        // back door, which is the substitution #275 and #287 exist to refuse. Only ever a removal:
+        // just marked a Walk, or just opted out of sharing, would be counted here while
+        // [requirementEvidenceRuns] beside it refuses to put it to the judge at all. That is a Walk
+        // becoming evidence by the back door, which is the substitution #275 and #287 exist to
+        // refuse. Only ever a removal:
         // the sheet can turn a Run into a Walk and never back, so a stored row that already fails
         // [isStageEvidence] fails it after the sheet too.
         val notEvidenceAfterAll = finalizedRun?.takeIf { !it.isStageEvidence }?.id
@@ -3549,28 +3548,17 @@ class SessionRepository(
             sourceRunIds = storedRecentRuns.map { it.id }.toSet(),
             // Asked of the same rows [recentRuns] was built from, so the two cannot describe
             // different Runs — including where [asFinalized] stands in for one, since the mark can
-            // land on the Run that just finished before this is read.
-            requirementEvidenceRunIdsByTimestamp = recentSessions
-                // Keyed by the timestamp the coach is shown for the Run — `AiRecentRun.timestamp`,
-                // which is this same field — so a reply naming one comes back to the Run it named
-                // (#287). A timestamp two Runs share names neither: it is dropped rather than left
-                // to whichever row happened to be written last, since a graduation granted on a
-                // coin toss between two Runs is exactly the thing that cannot be taken back.
-                //
-                // Grouped across *every* Run shown before any is discarded, which is the order that
-                // matters: a Walk sharing its start with a structured Run would otherwise be the
-                // only one dropped, leaving the Run answering to a timestamp the coach wrote down
-                // off the Walk — the exact substitution this whole check exists to refuse.
-                .groupBy { it.startTime }
-                .filterValues { sharingAStart -> sharingAStart.size == 1 }
-                .mapValues { (_, sharingAStart) -> sharingAStart.single() }
+            // land on the Run that just finished before this is read. Zipped rather than looked up,
+            // because [recentRuns] is [recentSessions] mapped one for one and an index is the only
+            // pairing of them that cannot go wrong: the timestamp two Runs share used to be the one
+            // that could, and the whole ambiguity goes when the pairing stops being a key (#514).
+            requirementEvidenceRuns = recentSessions.zip(recentRuns)
                 // What a Run has to be to answer a Stage at all, asked once for the whole app
                 // ([isStageEvidence]): a structured Run the runner did not mark a Walk and did not
-                // keep from the coach. The prompt says the first two halves of it — an Open Run may
-                // not progress a Stage, a Walk may not either — and a prompt sentence is a promise
-                // the code has to keep, because a graduation cannot be taken back.
-                .filterValues { it.isStageEvidence }
-                .mapValues { (_, evidence) -> evidence.id },
+                // keep from the coach. Filtering here rather than fencing it in words is the whole
+                // of the rule now — a Walk and an Open Run are simply never put to the judge.
+                .filter { (session, _) -> session.isStageEvidence }
+                .map { (session, run) -> GraduationCandidate(runId = session.id, run = run) },
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
@@ -4540,9 +4528,9 @@ class SessionRepository(
      * the second reader. It also means the Walk exclusion is not a filter this has to remember —
      * a Walk is worth no Best Effort at all, so it clears nothing.
      *
-     * **No lock, and no re-read of the evidence.** The graduation the coach grants is wrapped in
-     * [coachingProvenance] and re-checks [theEvidenceStillStands], because a Gemini round trip
-     * leaves seconds in which the Run behind it can be deleted. There is no round trip here: the Run
+     * **No lock, and no re-read of the evidence.** The graduation an evaluation grants is wrapped
+     * in [coachingProvenance] and re-checks [theEvidenceStillStands], because two network round
+     * trips leave seconds in which the Run behind it can be deleted. There is no round trip here: the Run
      * exists, its effort clears, it grants. Copying that machinery across would be a guard around
      * nothing.
      *
@@ -4579,7 +4567,7 @@ class SessionRepository(
         val plan = TrainingPlanProvider.planHoldingStage(stageId) ?: return false
         val stageIndex = plan.stages.indexOfFirst { it.id == stageId }
         val stage = plan.stages[stageIndex]
-        // The Stage's requirement is a judgement, so it stays the coach's — stage 1's "4 weeks of
+        // The Stage's requirement is a judgement, so it is the Graduation Judge's — stage 1's "4 weeks of
         // consistent Zone 2 training" is met by no measurement this could take.
         val requirement = stage.bestEffortRequirement ?: return false
         if (answering != null && answering != requirement.record) return false
@@ -4762,6 +4750,58 @@ class SessionRepository(
     }
 
     /**
+     * Whether the Stage's requirement has been met, and on which Runs (#514).
+     *
+     * Three answers, and the difference between the last two is the whole reason this is not a
+     * boolean:
+     * - **Not the judge's to answer.** A requirement written as a distance in a time is the app's
+     *   own ([AiTrainingContext.requirementIsTheAppsToAnswer], #290), already decided before this
+     *   was called. It is never put to the judge, so the two paths can never both grant.
+     * - **Nothing to answer it with.** A Stage with no qualifying Run behind it graduates on
+     *   nothing (#234, #275): an empty candidate list is a no without a question being asked.
+     * - **Nobody to ask.** A build with no key is a refusal and not a failure (#76) — no Stage is
+     *   graduated, and the coach still writes the debrief. An ask that *failed* is different and is
+     *   the one case that stops the whole evaluation, because a judgement nobody made must not be
+     *   read as a no on a path where a wrong answer either way is expensive.
+     *
+     * The returned ids are intersected back against the candidates, which is belt and braces: the
+     * judge is handed the app's own ids and answers under them, so an id it was never asked about
+     * has nowhere to have come from.
+     */
+    private suspend fun judgeGraduation(context: AiTrainingContext, stageId: String): GraduationVerdict {
+        if (context.requirementIsTheAppsToAnswer) {
+            Log.d(
+                "AiCoach",
+                "Not asking the judge: stage=$stageId states its requirement in numbers, so the " +
+                    "app answers it"
+            )
+            return GraduationVerdict.Judged(emptySet())
+        }
+        if (context.requirementEvidenceRuns.isEmpty()) {
+            Log.d(
+                "AiCoach",
+                "Not asking the judge: stage=$stageId has no run among the ${context.recentRuns.size} " +
+                    "recent ones that could answer its requirement"
+            )
+            return GraduationVerdict.Judged(emptySet())
+        }
+        val judge = graduationJudge?.takeIf { it.canBeAsked }
+        if (judge == null) {
+            Log.w("AiCoach", "Not asking the judge: there is none to ask, so stage=$stageId cannot graduate")
+            return GraduationVerdict.Judged(emptySet())
+        }
+        val candidateIds = context.requirementEvidenceRuns.map { it.runId }.toSet()
+        val answered = judge.runsAnsweringRequirement(
+            GraduationQuestion(
+                requirement = context.graduationRequirement,
+                stageTraining = context.stageTraining,
+                candidates = context.requirementEvidenceRuns,
+            )
+        ) ?: return GraduationVerdict.Unreachable
+        return GraduationVerdict.Judged(answered intersect candidateIds)
+    }
+
+    /**
      * Ask the coach about the Run just finished, and write what it says down.
      *
      * [runType] is the kind of Run that finished, taken from the Workout it followed — null for a Run
@@ -4875,8 +4915,33 @@ class SessionRepository(
                 asFinalized = finalizedRun,
                 stageWorkout = stageWorkoutOfKind
             )
+            // The graduation is decided before the debrief is written, and the verdict is handed
+            // to the debrief as a fact (#514). Two services, and the order between them is the
+            // whole of how they are allowed to fail: whether the runner has finished this Stage is
+            // settled first, by the judge, so the words the runner reads are written by a model
+            // that is told the answer rather than by one that is guessing at it.
+            //
+            // **Both or nothing.** An unreachable judge ends the evaluation exactly where an
+            // unreachable coach ends it — the standing prescription is held at the workout and
+            // nothing is written. A no from the judge is not a failure and does not come here: it
+            // is a judgement, and the evaluation goes on to write a debrief and a prescription
+            // under a Stage the runner is still in.
+            val graduating = when (val verdict = judgeGraduation(context, stageId)) {
+                is GraduationVerdict.Unreachable -> {
+                    Log.d("AiCoach", "No new prescription: the judge could not be reached. stageId=$stageId")
+                    holdStandingPrescriptionAtWorkout(
+                        runType = runType,
+                        workout = stageWorkoutOfKind,
+                        fitnessAndForm = context.fitnessAndForm,
+                        shownRunIds = context.sourceRunIds,
+                        scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+                    )
+                    return
+                }
+                is GraduationVerdict.Judged -> verdict
+            }
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
-            val response = coachClient.evaluateProgress(context)
+            val response = coachClient.evaluateProgress(context, graduating.evidenceRunIds.isNotEmpty())
             if (response == null) {
                 // No new prescription is written — see evaluateProgress. But a prescription already
                 // standing keeps overriding the Stage's workout for up to 14 days, so on a fatigued
@@ -4925,53 +4990,15 @@ class SessionRepository(
             // can refuse if the runner changed plans meanwhile — see CoachWriteScope.
             val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
 
-            // A Stage is graduated on its own Runs, and with none of them there is nothing to
-            // graduate it on (#234). The coach is told this in as many words, but a graduation
-            // cannot be taken back, so the one place it is acted on refuses it outright rather than
-            // trusting the telling — and the coach's message still reaches the runner either way.
-            //
-            // Neither is a Walk (#275), for the same reason it completes no prescribed workout: a
-            // week of post-lifting walks must not push the plan forward. Nor is an unplanned Open
-            // Run, which followed no structure to complete.
-            //
-            // And the question is not "was there a structured Run" but "was *this* the Run" (#287).
-            // Non-emptiness is not a link: shown one old structured Run that plainly failed the
-            // requirement beside a two-hour Walk, the coach can read the requirement as met from
-            // the Walk's numbers, and a check that only asked whether a qualifying Run existed
-            // would grant it — one eligible Run switching the guard off for everything shown beside
-            // it. So the coach names the Runs it graduated on and the names are resolved here: all
-            // of them have to be Runs this Stage could actually be graduated on, or there is no
-            // graduation.
-            //
-            // Several Runs may be named, because several is what some requirements take — "4 weeks
-            // of consistent Zone 2 training" is met by no single Run, and a rule demanding one
-            // would leave the plan's first stage impossible to finish. Naming more of them does not
-            // loosen anything: each name still has to resolve, and one Walk among them refuses the
-            // lot.
-            // And where the Stage's requirement is written in numbers, the coach may not graduate at
-            // all (#290) — the app has already answered it, before this was called, and two paths
-            // able to grant the same graduation is one of them granting it twice. The prompt tells
-            // the coach this in as many words; a prompt sentence is a promise the code has to keep.
-            val evidenceRunIds = context.evidenceRunIdsNamedBy(clampedResponse)
-            val graduated = clampedResponse.graduatedToNextStage &&
-                !context.requirementIsTheAppsToAnswer &&
-                evidenceRunIds != null
-            if (clampedResponse.graduatedToNextStage && context.requirementIsTheAppsToAnswer) {
-                Log.d(
-                    "AiCoach",
-                    "Refusing a graduation: stage=$stageId states its requirement in numbers, so the " +
-                        "app answers it and the coach does not"
-                )
-            } else if (clampedResponse.graduatedToNextStage && !graduated) {
-                Log.d(
-                    "AiCoach",
-                    "Refusing a graduation: the coach named runs at " +
-                        "${clampedResponse.graduationEvidenceRunTimestamps} as its evidence, and not all " +
-                        "of them are runs recorded under stage=$stageId that could answer the " +
-                        "requirement (${context.recentRuns.size} recent, " +
-                        "${context.requirementEvidenceRunIdsByTimestamp.size} of them able to answer it)"
-                )
-            }
+            // The graduation, already decided above and only carried here (#514). What used to
+            // stand in this place was a guard: the coach set a flag, named its evidence by copying
+            // timestamps out of the prompt, and this code resolved every name back to a Run it had
+            // shown — refusing the lot if one of them was a Walk, an Open Run, a Run nobody was
+            // shown, or a timestamp two Runs shared. None of that is needed once the question is
+            // asked per Run under the app's own id: a Walk is never asked about, so it can never be
+            // answered from, and there is no name to fail to resolve.
+            val evidenceRunIds = graduating.evidenceRunIds
+            val graduated = evidenceRunIds.isNotEmpty()
 
             if (graduated) {
                 val plan = TrainingPlanProvider.planHoldingStage(stageId)
@@ -5005,8 +5032,8 @@ class SessionRepository(
                 // graduating late rather than twice ([RunnerSession.ranUnderStageId]).
                 //
                 // Asked of all three rather than of [evidenceRunIds] alone, which is stricter and
-                // deliberately so (#287): the Runs the coach named are among these three, so a
-                // delete taking one of *them* away is refused here either way, and a delete taking
+                // deliberately so (#287): the Runs the judge answered for are among these three, so
+                // a delete taking one of *them* away is refused here either way, and a delete taking
                 // one of the others away still empties the history the requirement's "consistently"
                 // was read against.
                 //

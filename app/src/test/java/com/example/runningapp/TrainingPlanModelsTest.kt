@@ -373,7 +373,7 @@ class TrainingPlanModelsTest {
     fun `only the two 5K stages state their requirement in numbers`() {
         val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
 
-        // "4 weeks of consistent Zone 2 training" holds a genuine judgement and stays the coach's.
+        // "4 weeks of consistent Zone 2 training" holds a genuine judgement, so it is the Graduation Judge's.
         assertNull(stages[0].bestEffortRequirement)
         // And the two that are arithmetic say so, at the numbers their own prose states: under 30
         // minutes is 1799, and 24:59 or faster is 1499.
