@@ -38,6 +38,25 @@ least one does.
 Gemini keeps the debrief and the prescription, which is what a generative model is right for, and is
 handed `graduating` as a fact about the runner rather than a flag to set.
 
+## What the judge is shown
+
+Measurements, and nothing a person typed. The judge state is built field by field rather than
+serialized off `AiRecentRun`, because the debrief and the judge want different things from the same
+Run: the debrief is handed the runner's note on purpose and fences it as their words, since a person
+reads what it writes, while the judge returns a probability the app acts on and a note claiming the
+requirement was met has no reader here to weigh it. So the note and the weather line stay with the
+prompt.
+
+A Run's **seconds in each zone** travel with it, along with its target zone and the seconds the
+strap recorded nothing for. A requirement written as a zone cannot be answered by an average: the
+boundaries are computed from this runner's own maximum and resting heart rate, and a Run swinging
+either side of Zone 2 averages neatly into a zone it trained in for no time at all. The app has
+measured this all along and stored it on the row; it simply never travelled.
+
+What is still missing is the same measurement for the **weeks behind** the candidate — the Stage
+Training Record counts Runs and measures none of them, so "4 weeks of consistent Zone 2 training" is
+evidenced for the candidate Run and not for the weeks before it (#516).
+
 ## What this deletes
 
 - `GraduationEvidenceTimestampsAdapter`, and the whole class of failure where one unreadable field

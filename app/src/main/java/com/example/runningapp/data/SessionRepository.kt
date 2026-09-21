@@ -3558,7 +3558,16 @@ class SessionRepository(
                 // keep from the coach. Filtering here rather than fencing it in words is the whole
                 // of the rule now — a Walk and an Open Run are simply never put to the judge.
                 .filter { (session, _) -> session.isStageEvidence }
-                .map { (session, run) -> GraduationCandidate(runId = session.id, run = run) },
+                .map { (session, run) ->
+                    GraduationCandidate(
+                        runId = session.id,
+                        run = run,
+                        // Read off the session row rather than out of [run]: a requirement written
+                        // as a zone is judged on measured seconds, and the coach's view of a Run
+                        // carries an average heart rate instead (#514).
+                        zones = RunZoneExposure.of(session),
+                    )
+                },
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
