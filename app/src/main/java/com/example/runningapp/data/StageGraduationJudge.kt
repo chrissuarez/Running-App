@@ -3,8 +3,6 @@ package com.example.runningapp.data
 import android.util.Log
 import com.example.runningapp.BuildConfig
 import com.example.runningapp.training.StageTrainingRecord
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.OutputStreamWriter
@@ -96,14 +94,6 @@ private const val TYPESAFE_MODEL = "jev-latest"
 private const val QUESTION_PREFIX = "run_"
 
 /**
- * Nulls are written out rather than dropped, which is Gson's default — the same bargain the
- * evaluation prompt strikes (#182). A Run with no measured 5K has to say so: a field that is simply
- * absent reads as an oversight, and this one is the whole of the evidence a distance-and-time
- * requirement is judged on.
- */
-private val stateGson: Gson = GsonBuilder().serializeNulls().create()
-
-/**
  * The judge, asked over TypeSafe's System One (#514).
  *
  * One request, one question per candidate Run, all of them over the same state: they are
@@ -162,7 +152,7 @@ class TypeSafeGraduationJudge(
  * of them it takes, and what to do with the answers are all the app's, in Kotlin, where they were
  * always meant to be.
  */
-internal fun buildGraduationRequest(question: GraduationQuestion, gson: Gson = stateGson): String {
+internal fun buildGraduationRequest(question: GraduationQuestion): String {
     // A Stage with no qualifying Run behind it sends no record — nothing rather than a record of
     // zeroes, which is a thing to reason from where an absence is not. So the sentence pointing at
     // it has to go with it: an instruction naming `stageTrainingRecord` on a request that has no
@@ -174,7 +164,7 @@ internal fun buildGraduationRequest(question: GraduationQuestion, gson: Gson = s
     }
     val runs = JsonObject().apply {
         question.candidates.forEach { candidate ->
-            add(candidate.runId.toString(), gson.toJsonTree(candidate.run))
+            add(candidate.runId.toString(), candidate.run.asJudgeState())
         }
     }
     val state = JsonObject().apply {
@@ -224,6 +214,33 @@ internal fun buildGraduationRequest(question: GraduationQuestion, gson: Gson = s
         addProperty("model", TYPESAFE_MODEL)
         add("questions", questions)
     }.toString()
+}
+
+/**
+ * One Run as the judge's state: its measurements, and nothing a person wrote (#514).
+ *
+ * The fields are listed here rather than serialized off the class, because the two readers of an
+ * [AiRecentRun] want different things. The debrief prompt wants the Run as the runner experienced
+ * it — their note, quoted and fenced as their words, and the weather it was run in — and it reads
+ * that prose to write prose. This judge decides a graduation that is granted for good, so it is
+ * handed only the numbers the requirement may be measured against. A note is free text the runner
+ * chooses, and there is no fence to put around it here: the answer this state produces is not read
+ * by a person who can weigh it, it is a probability the app acts on. So the note does not travel,
+ * and a Run that says "this met the requirement" says it to the debrief and to nobody else.
+ *
+ * Nulls are written out rather than dropped (#182). A Run with no measured 5K has to say so: a
+ * field that is simply absent reads as an oversight, and this one is the whole of the evidence a
+ * distance-and-time requirement is judged on.
+ */
+private fun AiRecentRun.asJudgeState(): JsonObject = JsonObject().apply {
+    addProperty("durationSeconds", durationSeconds)
+    addProperty("avgHr", avgHr)
+    addProperty("sessionType", sessionType)
+    addProperty("runMode", runMode)
+    addProperty("timestamp", timestamp)
+    addProperty("distanceKm", distanceKm)
+    addProperty("fastest5kSeconds", fastest5kSeconds)
+    addProperty("perceivedEffort", perceivedEffort)
 }
 
 /**
