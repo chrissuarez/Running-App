@@ -22,7 +22,42 @@ import kotlinx.coroutines.withContext
 data class GraduationCandidate(
     val runId: Long,
     val run: AiRecentRun,
+    val zones: RunZoneExposure,
 )
+
+/**
+ * How long a Run was actually spent in each heart-rate zone (#514).
+ *
+ * A requirement written as a zone cannot be answered by an average. The zones are boundaries
+ * computed from *this* runner's own maximum and resting heart rate, so one average bpm is a
+ * different zone for two runners — and a Run that swings either side of Zone 2 averages neatly into
+ * it while having been trained in neither. The app has measured this second by second all along and
+ * stores it on the row; it simply never travelled.
+ *
+ * [secondsWithoutHeartRate] is here so the seconds can be read as a whole. A Run whose strap dropped
+ * for half of it has a zone total that says nothing about the other half, and an absence that is not
+ * stated reads as a Run spent out of every zone.
+ */
+data class RunZoneExposure(
+    val secondsByZone: Map<Int, Long>,
+    val targetZone: Int,
+    val secondsWithoutHeartRate: Long,
+) {
+    companion object {
+        /** The Run's own stored measurement, read off the row it was written to. */
+        fun of(session: RunnerSession): RunZoneExposure = RunZoneExposure(
+            secondsByZone = mapOf(
+                1 to session.zone1Seconds,
+                2 to session.zone2Seconds,
+                3 to session.zone3Seconds,
+                4 to session.zone4Seconds,
+                5 to session.zone5Seconds,
+            ),
+            targetZone = session.targetZone,
+            secondsWithoutHeartRate = session.noDataSeconds,
+        )
+    }
+}
 
 /**
  * What the judge is asked: the Stage's requirement, how much training the Stage has held, and the
@@ -164,7 +199,7 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
     }
     val runs = JsonObject().apply {
         question.candidates.forEach { candidate ->
-            add(candidate.runId.toString(), candidate.run.asJudgeState())
+            add(candidate.runId.toString(), candidate.asJudgeState())
         }
     }
     val state = JsonObject().apply {
@@ -217,7 +252,8 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
 }
 
 /**
- * One Run as the judge's state: its measurements, and nothing a person wrote (#514).
+ * One Run as the judge's state: its measurements — zone seconds included — and nothing a person
+ * wrote (#514).
  *
  * The fields are listed here rather than serialized off the class, because the two readers of an
  * [AiRecentRun] want different things. The debrief prompt wants the Run as the runner experienced
@@ -232,15 +268,34 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
  * field that is simply absent reads as an oversight, and this one is the whole of the evidence a
  * distance-and-time requirement is judged on.
  */
-private fun AiRecentRun.asJudgeState(): JsonObject = JsonObject().apply {
-    addProperty("durationSeconds", durationSeconds)
-    addProperty("avgHr", avgHr)
-    addProperty("sessionType", sessionType)
-    addProperty("runMode", runMode)
-    addProperty("timestamp", timestamp)
-    addProperty("distanceKm", distanceKm)
-    addProperty("fastest5kSeconds", fastest5kSeconds)
-    addProperty("perceivedEffort", perceivedEffort)
+private fun GraduationCandidate.asJudgeState(): JsonObject = JsonObject().apply {
+    addProperty("durationSeconds", run.durationSeconds)
+    addProperty("avgHr", run.avgHr)
+    addProperty("sessionType", run.sessionType)
+    addProperty("runMode", run.runMode)
+    addProperty("timestamp", run.timestamp)
+    addProperty("distanceKm", run.distanceKm)
+    addProperty("fastest5kSeconds", run.fastest5kSeconds)
+    addProperty("perceivedEffort", run.perceivedEffort)
+    // What a requirement written as a zone is judged on, and the reason `avgHr` is not it.
+    add(
+        "secondsInZone",
+        JsonObject().apply {
+            zones.secondsByZone.toSortedMap().forEach { (zone, seconds) ->
+                addProperty(zone.toString(), seconds)
+            }
+        }
+    )
+    addProperty("targetZone", zones.targetZone)
+    addProperty("secondsWithoutHeartRate", zones.secondsWithoutHeartRate)
+    addProperty(
+        "zonesAre",
+        "Heart-rate zones measured second by second against this runner's own maximum and " +
+            "resting heart rate, so zone 2 here is this runner's zone 2. Judge a requirement " +
+            "written as a zone on these seconds and never on avgHr: an average sits in a zone " +
+            "the run may have spent no time in. secondsWithoutHeartRate is time the strap " +
+            "recorded nothing for, which is unknown and not time out of every zone."
+    )
 }
 
 /**
