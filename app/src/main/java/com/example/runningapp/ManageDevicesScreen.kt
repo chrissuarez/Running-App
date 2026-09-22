@@ -150,12 +150,6 @@ fun SavedDeviceListItem(
     }
 }
 
-private fun formatTime(seconds: Long): String {
-    val mins = seconds / 60
-    val secs = seconds % 60
-    return "%02d:%02d".format(mins, secs)
-}
-
 @Composable
 fun DeviceListItem(device: ScannedStrap, onClick: () -> Unit) {
     Card(
@@ -171,13 +165,3 @@ fun DeviceListItem(device: ScannedStrap, onClick: () -> Unit) {
         }
     }
 }
-
-
-/**
- * One answer from a watched read, so "not yet" and "nothing" are not the same value (#73).
- *
- * A `produceState` over a flow starts at a value nobody has read, and a flow whose answer is "there
- * is none" hands back the same null. A screen owes a different thing to each — a spinner to the
- * first, a way out to the second — so what it holds is the *answer*, and the absence of one is the
- * absence of this wrapper rather than a null inside it.
- */

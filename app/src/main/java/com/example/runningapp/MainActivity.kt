@@ -1787,4 +1787,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * One answer from a watched read, so "not yet" and "nothing" are not the same value (#73).
+ *
+ * A `produceState` over a flow starts at a value nobody has read, and a flow whose answer is "there
+ * is none" hands back the same null. A screen owes a different thing to each — a spinner to the
+ * first, a way out to the second — so what it holds is the *answer*, and the absence of one is the
+ * absence of this wrapper rather than a null inside it.
+ */
 private class Answered<T>(val value: T)
