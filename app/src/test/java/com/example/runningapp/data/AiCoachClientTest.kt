@@ -20,8 +20,10 @@ class AiCoachClientTest {
      * The graduation is decided before the prompt is built now (#514), so it is an input here
      * rather than something the reply carries back.
      */
-    private fun promptFor(context: AiTrainingContext, graduating: Boolean = false): String =
-        buildEvaluationPrompt(context, graduating)
+    private fun promptFor(
+        context: AiTrainingContext,
+        advance: StageAdvance = StageAdvance.NONE,
+    ): String = buildEvaluationPrompt(context, advance)
 
     /** Weeks every Run of which was measured — the plain case, so a test can say scores alone. */
     private fun efforts(vararg scores: Int?) = scores.map { AiWeeklyEffort(it, partlyMeasured = false) }
@@ -180,7 +182,7 @@ class AiCoachClientTest {
         // Told nothing about the stage, a model reaching for the nearest thing it can say lands on
         // "you have not met it yet" — wrong on a graduating run, and a second opinion on every
         // other one. So both branches are stated outright (#514).
-        val prompt = promptFor(oneRunWalkSession, graduating = false)
+        val prompt = promptFor(oneRunWalkSession, advance = StageAdvance.NONE)
 
         assertTrue(
             prompt.contains(
@@ -195,7 +197,7 @@ class AiCoachClientTest {
     fun `a graduating run is told the app has moved them on, so the debrief can say so`() {
         // The debrief still carries "you have finished this stage", and the only order that keeps
         // it there without the model having a say in whether it is true is: decide, then write.
-        val prompt = promptFor(oneRunWalkSession, graduating = true)
+        val prompt = promptFor(oneRunWalkSession, advance = StageAdvance.TO_NEXT_STAGE)
 
         assertTrue(
             prompt.contains(
@@ -205,6 +207,17 @@ class AiCoachClientTest {
         )
         assertTrue(prompt.contains("congratulate them on finishing this stage"))
         assertFalse(prompt.contains("The app has not moved the runner on"))
+    }
+
+    @Test
+    fun `finishing the last Stage is told as finishing the plan, not as a move`() {
+        // The app has nowhere to move them to, so it writes no move (#294). A coach told
+        // "graduating" and nothing else would congratulate them on arriving somewhere they are not.
+        val prompt = promptFor(oneRunWalkSession, advance = StageAdvance.PLAN_FINISHED)
+
+        assertTrue(prompt.contains("they have finished the plan itself"))
+        assertTrue(prompt.contains("They have not moved to a next stage and there is not one"))
+        assertFalse(prompt.contains("has already moved them on to the next stage"))
     }
 
     @Test

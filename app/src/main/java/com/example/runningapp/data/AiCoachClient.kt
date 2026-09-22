@@ -53,10 +53,10 @@ class AiCoachClient {
      * — a gym with no signal — throw a runner back to the plan's generic numbers, discarding the
      * last thing the coach actually said. With no standing prescription, the plan runs as written.
      */
-    suspend fun evaluateProgress(context: AiTrainingContext, graduating: Boolean): AiCoachResponse? {
+    suspend fun evaluateProgress(context: AiTrainingContext, advance: StageAdvance): AiCoachResponse? {
         require(apiKey.isNotBlank()) { "Gemini API key is missing" }
 
-        val prompt = buildEvaluationPrompt(context, graduating)
+        val prompt = buildEvaluationPrompt(context, advance)
 
         return try {
             val response = model.generateContent(prompt)
@@ -121,9 +121,30 @@ private val recentRunsGson: Gson = GsonBuilder().serializeNulls().create()
  * Deciding first and writing second is the only order that keeps "you have finished this stage" in
  * the runner's own debrief without the model having any say in whether it is true.
  */
+/**
+ * What the app has already done about this Stage's requirement, which the debrief is then told
+ * (#514, #294).
+ *
+ * Three answers and not two, because "the requirement is met" ends two different ways. A Stage with
+ * one after it is left behind and the runner is moved on. The **last** Stage of a plan has nowhere
+ * to move to: the runner keeps it, and what they have finished is the plan. Told only "graduating",
+ * a coach writes the runner a move to a stage that does not exist — and the app, having no next
+ * Stage to write, leaves them exactly where they were.
+ */
+enum class StageAdvance {
+    /** The requirement is not met, or is not the judge's to answer. Nothing has moved. */
+    NONE,
+
+    /** The requirement is met and the runner is now on the next Stage. */
+    TO_NEXT_STAGE,
+
+    /** The requirement is met and there is no next Stage: this was the end of the plan. */
+    PLAN_FINISHED,
+}
+
 internal fun buildEvaluationPrompt(
     context: AiTrainingContext,
-    graduating: Boolean,
+    advance: StageAdvance,
     gson: Gson = recentRunsGson
 ): String = buildString {
     appendLine("You are an expert running coach.")
@@ -215,8 +236,13 @@ internal fun buildEvaluationPrompt(
     // model told nothing about the stage will reach for the nearest thing it can say about it —
     // most often that the runner has not met it yet, which on a graduating run is both wrong and
     // the opposite of the message the app has just written.
-    if (graduating) {
+    if (advance == StageAdvance.TO_NEXT_STAGE) {
         appendLine("The app has judged that the runner has now met this stage's requirement, and has already moved them on to the next stage. Say so in coachMessage and congratulate them on finishing this stage.")
+    } else if (advance == StageAdvance.PLAN_FINISHED) {
+        // The same verdict, and the opposite sentence about where it leaves them (#294). There is
+        // no stage after this one, so the app has moved them nowhere — told they were moved on,
+        // the coach would write the runner into a stage that does not exist.
+        appendLine("The app has judged that the runner has now met this stage's requirement, and this was the last stage of the whole training plan — so they have finished the plan itself. Say so in coachMessage and congratulate them on finishing the plan. They have not moved to a next stage and there is not one: do not mention moving on. They keep this stage as an ongoing routine.")
     } else {
         appendLine("Whether this stage's requirement has been met is the app's to decide and not yours. The app has not moved the runner on: do not tell them they have finished this stage or moved to a next one, and do not tell them they have failed it either.")
     }

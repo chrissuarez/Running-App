@@ -363,7 +363,13 @@ internal fun parseGraduationAnswers(json: String, asked: Set<Long>): Set<Long>? 
         if (!key.startsWith(QUESTION_PREFIX)) return@mapNotNull null
         val runId = key.removePrefix(QUESTION_PREFIX).toLongOrNull() ?: return@mapNotNull null
         if (runId !in asked) return@mapNotNull null
-        val noul = runCatching { value.asJsonObject.get("noul").asDouble }.getOrNull()
+        // A probability, or nothing. A Noul is a number between 0 and 1, so anything else — a
+        // string, an infinity, a 42 — is a reply that did not answer the question rather than a
+        // confident yes, and this one grants a graduation that is granted for good.
+        val noul = runCatching { value.asJsonObject.get("noul") }.getOrNull()
+            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+            ?.let { runCatching { it.asDouble }.getOrNull() }
+            ?.takeIf { it.isFinite() && it in 0.0..1.0 }
             ?: return@mapNotNull null
         runId to noul
     }
