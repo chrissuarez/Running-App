@@ -12,12 +12,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * One Run put to the judge, and the id it comes back under (#514).
+ * One Run of the evidence the requirement is judged on, and the id it is named by (#514).
  *
- * The id travels with the question and is never in the state the model reads, so the answer to
- * "does run 47 meet this" is returned under the app's own key rather than copied out of a prompt.
- * That copy is the whole of what this replaces: a graduation used to rest on the model reproducing
- * a `timestamp` digit for digit, where a miscopied digit and a refusal were the same answer.
+ * The id is the app's own database id. It is what the Runs are keyed by in the judge's state, so
+ * nothing about a Run has to be matched back by a timestamp a model wrote out: the whole of the
+ * evidence travels under keys the app chose. That copy is what this replaced — a graduation used to
+ * rest on the model reproducing a `timestamp` digit for digit, where a miscopied digit and a
+ * refusal were the same answer.
  */
 data class GraduationCandidate(
     val runId: Long,
@@ -65,8 +66,8 @@ data class RunZoneExposure(
  *
  * [candidates] is exactly the set [AiTrainingContext.requirementEvidenceRuns] holds — structured
  * Runs recorded under this Stage that the runner did not mark a Walk and did not keep from the
- * coach. A Walk or an unplanned Open Run is never asked about, so there is no rule needed to forbid
- * naming one: the question is never put.
+ * coach. A Walk or an unplanned Open Run is never in the evidence, so there is no rule needed to
+ * forbid naming one: it is not in the request at all.
  */
 data class GraduationQuestion(
     val requirement: String,
@@ -94,12 +95,13 @@ interface StageGraduationJudge {
     val canBeAsked: Boolean
 
     /**
-     * Which of [GraduationQuestion.candidates] meet the requirement on their own numbers, or null
-     * when no judgement was reached.
+     * Whether the Stage's training, taken as a whole, meets its requirement — or null when no
+     * judgement was reached.
      *
-     * Null is not an empty set. An empty set is a judgement — these Runs do not meet it — and the
-     * Stage stands. Null is no judgement at all, and a graduation cannot be taken back, so the
-     * caller throws the whole evaluation away rather than reading it as a no.
+     * Null is not false. False is a judgement — this training does not meet the requirement — and
+     * the Stage stands while the evaluation carries on. Null is no judgement at all, and a
+     * graduation cannot be taken back, so the caller throws the whole evaluation away rather than
+     * reading it as a no.
      *
      * An implementation that [canBeAsked] is false for returns null here too, because it reached no
      * judgement either. The two are still different answers and the caller still tells them apart
@@ -107,11 +109,11 @@ interface StageGraduationJudge {
      * on writing (#76). This is the safe order: a judge that is asked when it should not have been
      * refuses rather than inventing a no.
      */
-    suspend fun runsAnsweringRequirement(question: GraduationQuestion): Set<Long>?
+    suspend fun requirementIsMet(question: GraduationQuestion): Boolean?
 }
 
 /**
- * How sure the judge has to be before a Run counts as meeting the requirement (#514).
+ * How sure the judge has to be before the requirement counts as met (#514).
  *
  * Jev returns a calibrated probability rather than a yes, so this is a real number and not a vibe.
  * It sits high because the two errors are not equal: a graduation granted wrongly is granted for
@@ -125,17 +127,33 @@ internal const val GRADUATION_NOUL_THRESHOLD = 0.8
 private const val TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 private const val TYPESAFE_MODEL = "jev-latest"
 
-/** The prefix that turns a Run's database id into a question id, and back. */
-private const val QUESTION_PREFIX = "run_"
+/**
+ * The name the one question is asked under, and the only name an answer is accepted under (#516).
+ *
+ * It is not any key of `state`, deliberately. An answer arriving as `runs` or as a bare run id is a
+ * key copied off the state the model was shown rather than an answer to what was asked, and this
+ * one grants a graduation that is granted for good.
+ */
+private const val REQUIREMENT_QUESTION_ID = "requirement_met"
 
 /**
- * The judge, asked over TypeSafe's System One (#514).
+ * The judge, asked over TypeSafe's System One (#514, #516).
  *
- * One request, one question per candidate Run, all of them over the same state: they are
- * independent judgements about different Runs, so they run in parallel and none of them can see
- * another's answer. That independence is the point — a Run either meets the requirement on its own
- * numbers or it does not, and a Walk sitting beside it cannot lend it anything, because the Walk
- * was never in the request.
+ * One request and **one question**: does the training this Stage holds meet its requirement. The
+ * evidence Runs and the Stage's own week-by-week record go into the state together, and the judge
+ * reads them as one body of training.
+ *
+ * It used to be one question per Run, each forbidden to read the others (#514). That shape cannot
+ * answer the requirement Stage 1 is built on — "4 weeks of consistent Zone 2 training" — because no
+ * single Run shows four weeks of anything, so the only honest per-Run answer is no and the Stage
+ * could never graduate. Measured on Chris's own data against `jev-1.13.0`: the per-Run question
+ * scored 0.51, the per-Run question with each week's Zone 2 seconds added scored 0.43, and this one
+ * cohort question scored 0.87 — the only one of the three over [GRADUATION_NOUL_THRESHOLD]. See
+ * ADR 0024.
+ *
+ * What the cohort question does *not* give back is the model's freedom to pick Runs. It is asked
+ * one closed question about a set the app chose, and answers a probability. Which Runs may be in
+ * that set, how sure the answer has to be, and what a yes does are all still the app's, in Kotlin.
  */
 class TypeSafeGraduationJudge(
     private val apiKey: String = BuildConfig.TYPESAFE_API_KEY,
@@ -144,9 +162,12 @@ class TypeSafeGraduationJudge(
 
     override val canBeAsked: Boolean get() = apiKey.isNotBlank()
 
-    override suspend fun runsAnsweringRequirement(question: GraduationQuestion): Set<Long>? {
+    override suspend fun requirementIsMet(question: GraduationQuestion): Boolean? {
         if (!canBeAsked) return null
-        if (question.candidates.isEmpty()) return emptySet()
+        // No evidence is a no, and it is the app's own no: there is nothing to send, so nothing is
+        // asked. A request with an empty `runs` would be asking the judge to reason about an
+        // absence, which is the one thing a model reliably fills in for itself.
+        if (question.candidates.isEmpty()) return false
 
         return withContext(Dispatchers.IO) {
             try {
@@ -165,7 +186,7 @@ class TypeSafeGraduationJudge(
                         return@withContext null
                     }
                     val body = connection.inputStream.bufferedReader().use { it.readText() }
-                    parseGraduationAnswers(body, question.candidates.map { it.runId }.toSet())
+                    parseGraduationAnswer(body)
                 } finally {
                     connection.disconnect()
                 }
@@ -178,14 +199,12 @@ class TypeSafeGraduationJudge(
 }
 
 /**
- * The request body, built rather than templated so the question ids and the state paths cannot
- * drift apart: each question is about `runs.<id>` and is named `run_<id>`.
+ * The request body, built rather than templated so the question and the state paths it names cannot
+ * drift apart (#516).
  *
- * One narrow judgement per question, which is the whole shape of the change. The model is not asked
- * to pick a Run, to count Runs, or to decide whether the Stage graduates — it is asked, once per
- * Run, whether that Run's own numbers meet the requirement. Which Runs may be asked about, how many
- * of them it takes, and what to do with the answers are all the app's, in Kotlin, where they were
- * always meant to be.
+ * One judgement, narrowly put. The model is not asked to pick a Run, to name its evidence, or to
+ * decide what happens next — it is asked, once, whether the training in front of it has met the
+ * requirement. Which Runs it may see, how sure it has to be, and what a yes does are all the app's.
  */
 internal fun buildGraduationRequest(question: GraduationQuestion): String {
     // A Stage with no qualifying Run behind it sends no record — nothing rather than a record of
@@ -194,8 +213,9 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
     // such key is a path the model is sent to look down and finds nothing at.
     val consistencyClause = when {
         question.stageTraining.isEmpty -> ""
-        else -> ", together with `stageTrainingRecord` where the requirement is about how " +
-            "consistently the runner has trained"
+        else -> " Read them together with `stageTrainingRecord`, which is the app's own count of " +
+            "how much training this stage has held and is how a requirement written in weeks is " +
+            "answered."
     }
     val runs = JsonObject().apply {
         question.candidates.forEach { candidate ->
@@ -213,36 +233,38 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
         add("runs", runs)
     }
     val questions = JsonObject().apply {
-        question.candidates.forEach { candidate ->
-            add(
-                QUESTION_PREFIX + candidate.runId,
-                JsonObject().apply {
-                    addProperty("type", "noul")
-                    addProperty(
-                        "instructions",
-                        "The runner is working toward this training stage's requirement: " +
-                            "`requirement`. Judge the single run at `runs.${candidate.runId}` " +
-                            "against it. Use only that run's own recorded numbers$consistencyClause. " +
-                            "Do not use any other run in `runs`."
-                    )
-                    add(
-                        "criteria",
-                        JsonObject().apply {
-                            addProperty(
-                                "true",
-                                "This run's own numbers, read with the stage's training record, " +
-                                    "show the requirement has been met."
-                            )
-                            addProperty(
-                                "false",
-                                "This run does not show the requirement has been met, or the " +
-                                    "numbers recorded for it cannot answer the requirement at all."
-                            )
-                        }
-                    )
-                }
-            )
-        }
+        add(
+            REQUIREMENT_QUESTION_ID,
+            JsonObject().apply {
+                addProperty("type", "noul")
+                addProperty(
+                    "instructions",
+                    "The runner is working toward this training stage's requirement: " +
+                        "`requirement`. Judge whether the training this stage holds has met it. " +
+                        "`runs` holds the stage's most recent qualifying runs, keyed by the app's " +
+                        "own run id, with what was measured for each." + consistencyClause +
+                        " Judge the training as a whole, not any single run: a requirement about " +
+                        "a span of weeks is met by the record of those weeks and not by one run, " +
+                        "and a requirement about one performance is met the moment one run shows " +
+                        "it."
+                )
+                add(
+                    "criteria",
+                    JsonObject().apply {
+                        addProperty(
+                            "true",
+                            "The recorded training, read as a whole, shows this stage's " +
+                                "requirement has been met."
+                        )
+                        addProperty(
+                            "false",
+                            "The requirement has not been met yet, or the numbers recorded " +
+                                "cannot answer it at all."
+                        )
+                    }
+                )
+            }
+        )
     }
     return JsonObject().apply {
         add("state", state)
@@ -337,18 +359,17 @@ private fun StageTrainingRecord.asJudgeState(): JsonObject = JsonObject().apply 
 }
 
 /**
- * Which Runs came back over the threshold, or null when the reply cannot be read (#514).
+ * Whether the reply says the requirement is met, or null when it cannot be read (#516).
  *
- * Every doubt is settled the way every doubt on this path is settled — refuse — but refusing is two
- * different things here and the difference is the whole of the change. A Run whose answer is below
- * the threshold is simply left out of the set: that is a judgement, and the other Runs' judgements
- * still stand. A reply that is not readable at all returns null, and nothing is graduated on it.
+ * Every doubt is settled the way every doubt on this path is settled — refuse — and here refusing
+ * is one thing rather than two: there is a single question, so a reply that does not answer it
+ * answers nothing, and nothing is graduated on it.
  *
- * An answer under a key nobody asked about is ignored rather than fatal: it cannot graduate
- * anything, because [asked] is what the caller resolves the result against, and it is the app's own
- * list of ids.
+ * The answer has to arrive under the name the question was asked under. An answer keyed off the
+ * state the model was shown — `runs`, or a bare run id — is a number copied out of a prompt, and
+ * that copy is exactly what this path stopped resting on (#287).
  */
-internal fun parseGraduationAnswers(json: String, asked: Set<Long>): Set<Long>? {
+internal fun parseGraduationAnswer(json: String): Boolean? {
     val answers = try {
         JsonParser.parseString(json)?.asJsonObject?.getAsJsonObject("answers")
     } catch (e: Exception) {
@@ -356,29 +377,21 @@ internal fun parseGraduationAnswers(json: String, asked: Set<Long>): Set<Long>? 
         null
     } ?: return null
 
-    val readable = answers.entrySet().mapNotNull { (key, value) ->
-        // The key has to be one this app wrote, prefix and all. A bare `47` is a key copied off
-        // `state.runs` rather than an answer to `run_47`, and the whole of what the prefix is for
-        // is that an answer arrives under the name the question was asked under.
-        if (!key.startsWith(QUESTION_PREFIX)) return@mapNotNull null
-        val runId = key.removePrefix(QUESTION_PREFIX).toLongOrNull() ?: return@mapNotNull null
-        if (runId !in asked) return@mapNotNull null
-        // A probability, or nothing. A Noul is a number between 0 and 1, so anything else — a
-        // string, an infinity, a 42 — is a reply that did not answer the question rather than a
-        // confident yes, and this one grants a graduation that is granted for good.
-        val noul = runCatching { value.asJsonObject.get("noul") }.getOrNull()
-            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
-            ?.let { runCatching { it.asDouble }.getOrNull() }
-            ?.takeIf { it.isFinite() && it in 0.0..1.0 }
-            ?: return@mapNotNull null
-        runId to noul
-    }
-    // A reply that answers none of what was asked is no judgement, not a judgement of no. An empty
-    // `answers` object, or one whose every entry is unreadable, says nothing about these Runs — and
-    // "the judge said no" is a sentence the evaluation acts on.
-    if (readable.isEmpty()) {
-        Log.w("AiCoach", "TypeSafe answered none of the ${asked.size} runs it was asked about")
+    val answer = runCatching { answers.getAsJsonObject(REQUIREMENT_QUESTION_ID) }.getOrNull()
+    if (answer == null) {
+        Log.w("AiCoach", "TypeSafe did not answer $REQUIREMENT_QUESTION_ID")
         return null
     }
-    return readable.filter { (_, noul) -> noul >= GRADUATION_NOUL_THRESHOLD }.map { it.first }.toSet()
+    // A probability, or nothing. A Noul is a number between 0 and 1, so anything else — a string,
+    // an infinity, a 42 — is a reply that did not answer the question rather than a confident yes,
+    // and this one grants a graduation that is granted for good.
+    val noul = runCatching { answer.get("noul") }.getOrNull()
+        ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+        ?.let { runCatching { it.asDouble }.getOrNull() }
+        ?.takeIf { it.isFinite() && it in 0.0..1.0 }
+    if (noul == null) {
+        Log.w("AiCoach", "TypeSafe's answer to $REQUIREMENT_QUESTION_ID is not a probability")
+        return null
+    }
+    return noul >= GRADUATION_NOUL_THRESHOLD
 }

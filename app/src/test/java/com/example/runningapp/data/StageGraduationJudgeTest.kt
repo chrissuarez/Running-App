@@ -11,7 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two halves of the judge that are worth testing, and neither needs a network (#514) — the same
+ * The two halves of the judge that are worth testing, and neither needs a network (#514, #516) — the same
  * bargain `WeatherClient` strikes: the URL it builds and the reply it reads are ordinary functions,
  * and only the socket between them is not.
  */
@@ -60,25 +60,25 @@ class StageGraduationJudgeTest {
     // --- What is asked ------------------------------------------------------------------------
 
     @Test
-    fun `each candidate gets its own question, keyed by the app's own run id`() {
-        // The whole of the change in one assertion. The model never copies a number: the app asked
-        // about run 47 and gets run 47's answer back, so a miscopied digit — which used to be
-        // indistinguishable from a refusal — has nowhere to happen (#287).
+    fun `one question is asked about the stage, not one per run`() {
+        // The whole of #516 in one assertion. "4 weeks of consistent Zone 2 training" is about a
+        // span of training, and no single Run shows four weeks of anything — so it is put once,
+        // over all the evidence at once.
         val questions = requestOf(twoCandidates).getAsJsonObject("questions")
 
-        assertEquals(setOf("run_47", "run_48"), questions.keySet())
-        assertEquals("noul", questions.getAsJsonObject("run_47").get("type").asString)
+        assertEquals(setOf("requirement_met"), questions.keySet())
+        assertEquals("noul", questions.getAsJsonObject("requirement_met").get("type").asString)
     }
 
     @Test
-    fun `a question points at its own run and forbids reading from the others`() {
+    fun `the question is about the training as a whole and points at the runs`() {
         val instructions = requestOf(twoCandidates)
             .getAsJsonObject("questions")
-            .getAsJsonObject("run_47")
+            .getAsJsonObject("requirement_met")
             .get("instructions").asString
 
-        assertTrue(instructions.contains("`runs.47`"))
-        assertTrue(instructions.contains("Do not use any other run in `runs`"))
+        assertTrue(instructions.contains("`runs`"))
+        assertTrue(instructions.contains("Judge the training as a whole, not any single run"))
     }
 
     @Test
@@ -87,7 +87,7 @@ class StageGraduationJudgeTest {
         // the model is sent to look down and finds nothing at.
         val instructions = requestOf(twoCandidates)
             .getAsJsonObject("questions")
-            .getAsJsonObject("run_47")
+            .getAsJsonObject("requirement_met")
             .get("instructions").asString
 
         assertFalse(instructions.contains("stageTrainingRecord"))
@@ -99,7 +99,7 @@ class StageGraduationJudgeTest {
 
         val instructions = requestOf(question)
             .getAsJsonObject("questions")
-            .getAsJsonObject("run_47")
+            .getAsJsonObject("requirement_met")
             .get("instructions").asString
 
         assertTrue(instructions.contains("`stageTrainingRecord`"))
@@ -209,108 +209,84 @@ class StageGraduationJudgeTest {
     // --- What comes back ----------------------------------------------------------------------
 
     @Test
-    fun `a run over the threshold answers the requirement and one under it does not`() {
-        val answered = parseGraduationAnswers(
-            """{"answers":{"run_47":{"type":"noul","noul":0.94},"run_48":{"type":"noul","noul":0.41}}}""",
-            asked = setOf(47L, 48L),
+    fun `an answer over the threshold meets the requirement and one under it does not`() {
+        assertEquals(
+            true,
+            parseGraduationAnswer("""{"answers":{"requirement_met":{"type":"noul","noul":0.94}}}"""),
         )
-
-        assertEquals(setOf(47L), answered)
+        assertEquals(
+            false,
+            parseGraduationAnswer("""{"answers":{"requirement_met":{"type":"noul","noul":0.41}}}"""),
+        )
     }
 
     @Test
-    fun `a run below the threshold is left out, and the other runs' answers still stand`() {
-        // The difference that carries the whole design. A run the judge is unsure about is simply
-        // not evidence — that is a judgement, and it does not take the other runs down with it.
-        // Only an unreadable REPLY refuses everything.
-        val answered = parseGraduationAnswers(
-            """{"answers":{"run_47":{"type":"noul","noul":0.99},"run_48":{"type":"noul","noul":0.79}}}""",
-            asked = setOf(47L, 48L),
+    fun `the threshold is a floor and not a gap`() {
+        // A judgement of no, and not a refusal: 0.79 is the judge saying it is not sure enough,
+        // which the evaluation goes on to act on under the Stage the runner is still in.
+        assertEquals(
+            false,
+            parseGraduationAnswer("""{"answers":{"requirement_met":{"type":"noul","noul":0.79}}}"""),
         )
-
-        assertEquals(setOf(47L), answered)
+        assertEquals(
+            true,
+            parseGraduationAnswer("""{"answers":{"requirement_met":{"type":"noul","noul":0.8}}}"""),
+        )
     }
 
     @Test
     fun `a reply that is not an answer set is no judgement at all`() {
-        assertNull(parseGraduationAnswers("not json", asked = setOf(47L)))
-        assertNull(parseGraduationAnswers("""{"error":"overloaded"}""", asked = setOf(47L)))
+        assertNull(parseGraduationAnswer("not json"))
+        assertNull(parseGraduationAnswer("""{"error":"overloaded"}"""))
     }
 
     @Test
-    fun `a reply answering none of what was asked is no judgement, not a judgement of no`() {
+    fun `a reply that does not answer the question is no judgement, not a judgement of no`() {
         // "The judge said no" is a sentence the evaluation acts on — it goes on to write a
         // prescription and a debrief under the Stage the runner is still in. A reply that says
-        // nothing about these Runs has not said that.
-        assertNull(parseGraduationAnswers("""{"answers":{}}""", asked = setOf(47L)))
-        assertNull(
-            parseGraduationAnswers(
-                """{"answers":{"run_47":{"type":"noul"}}}""",
-                asked = setOf(47L),
-            )
-        )
-        assertNull(
-            parseGraduationAnswers(
-                """{"answers":{"run_999":{"type":"noul","noul":0.99}}}""",
-                asked = setOf(47L),
-            )
-        )
+        // nothing about this stage has not said that.
+        assertNull(parseGraduationAnswer("""{"answers":{}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":{"type":"noul"}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"something_else":{"type":"noul","noul":0.99}}}"""))
     }
 
     @Test
-    fun `an answer under a key nobody asked about cannot graduate anything`() {
-        // It has nowhere to have come from, because the ids in the questions are the app's own.
-        // Ignored rather than fatal: the runs that WERE asked about have answered.
-        val answered = parseGraduationAnswers(
-            """{"answers":{"run_47":{"type":"noul","noul":0.95},"run_999":{"type":"noul","noul":0.99},"nonsense":{"noul":1.0}}}""",
-            asked = setOf(47L),
-        )
-
-        assertEquals(setOf(47L), answered)
+    fun `an answer keyed off the state answers nothing`() {
+        // `runs` and `47` are keys of the state the model was shown, not the name the question was
+        // asked under. Accepting one would be the graduation resting on the model copying a name
+        // out of a prompt again (#287) — which is the whole of what this path stopped doing.
+        assertNull(parseGraduationAnswer("""{"answers":{"runs":{"type":"noul","noul":0.99}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"47":{"type":"noul","noul":0.99}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"run_47":{"type":"noul","noul":0.99}}}"""))
     }
 
     @Test
-    fun `a bare run id is a key copied off the state, and answers nothing`() {
-        // `47` is the key of `state.runs.47`, not the key of the question `run_47`. Accepting it
-        // would be the graduation resting on the model copying a number again (#287) — which is
-        // the whole of what this change exists to end.
-        val answered = parseGraduationAnswers(
-            """{"answers":{"47":{"type":"noul","noul":0.99}}}""",
-            asked = setOf(47L),
-        )
-
-        assertNull(answered)
+    fun `an answer that is not an object is not an answer`() {
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":0.99}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":"yes"}}"""))
     }
 
     @Test
     fun `a value that is not a probability is not an answer`() {
         // A Noul is a number between 0 and 1. A string, an infinity or a 42 is a reply that did not
         // answer the question, and reading one as a confident yes grants a graduation for good.
-        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":42}}}""", asked = setOf(47L)))
-        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":-0.5}}}""", asked = setOf(47L)))
-        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":"0.99"}}}""", asked = setOf(47L)))
-        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":"Infinity"}}}""", asked = setOf(47L)))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":{"noul":42}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":{"noul":-0.5}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":{"noul":"0.99"}}}"""))
+        assertNull(parseGraduationAnswer("""{"answers":{"requirement_met":{"noul":"Infinity"}}}"""))
     }
 
     @Test
-    fun `an answer with no readable probability is not a yes, and does not sink the readable ones`() {
-        val answered = parseGraduationAnswers(
-            """{"answers":{"run_47":{"type":"noul","noul":0.95},"run_48":{"type":"noul","noul":"very"}}}""",
-            asked = setOf(47L, 48L),
-        )
-
-        assertEquals(setOf(47L), answered)
-    }
-
-    @Test
-    fun `no candidates is a no without a request being sent`() {
+    fun `no evidence is a no without a request being sent`() {
+        // The endpoint is a closed port, so a request going out would fail and read as unreachable.
+        // It returns a judgement instead, which is the app's own: there is nothing to judge.
         val judge = TypeSafeGraduationJudge(apiKey = "not-a-real-key", endpoint = "http://127.0.0.1:1")
 
-        val answered = kotlinx.coroutines.runBlocking {
-            judge.runsAnsweringRequirement(twoCandidates.copy(candidates = emptyList()))
+        val met = kotlinx.coroutines.runBlocking {
+            judge.requirementIsMet(twoCandidates.copy(candidates = emptyList()))
         }
 
-        assertEquals(emptySet<Long>(), answered)
+        assertEquals(false, met)
     }
 
     @Test
