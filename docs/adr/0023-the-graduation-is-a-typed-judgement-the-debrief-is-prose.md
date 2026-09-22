@@ -36,7 +36,10 @@ probability comes back at or above `GRADUATION_NOUL_THRESHOLD`, and the Stage gr
 least one does.
 
 Gemini keeps the debrief and the prescription, which is what a generative model is right for, and is
-handed `graduating` as a fact about the runner rather than a flag to set.
+handed the outcome as a fact about the runner rather than a flag to set. Three outcomes and not two
+(`StageAdvance`): nothing moved, the runner is on the next Stage, or there was no next Stage and
+what they have finished is the plan (#294). A coach told only "graduating" on a plan's last Stage
+writes the runner a move the app is about to not make.
 
 ## What the judge is shown
 

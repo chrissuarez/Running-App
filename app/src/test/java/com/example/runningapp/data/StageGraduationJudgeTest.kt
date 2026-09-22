@@ -283,6 +283,16 @@ class StageGraduationJudgeTest {
     }
 
     @Test
+    fun `a value that is not a probability is not an answer`() {
+        // A Noul is a number between 0 and 1. A string, an infinity or a 42 is a reply that did not
+        // answer the question, and reading one as a confident yes grants a graduation for good.
+        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":42}}}""", asked = setOf(47L)))
+        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":-0.5}}}""", asked = setOf(47L)))
+        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":"0.99"}}}""", asked = setOf(47L)))
+        assertNull(parseGraduationAnswers("""{"answers":{"run_47":{"noul":"Infinity"}}}""", asked = setOf(47L)))
+    }
+
+    @Test
     fun `an answer with no readable probability is not a yes, and does not sink the readable ones`() {
         val answered = parseGraduationAnswers(
             """{"answers":{"run_47":{"type":"noul","noul":0.95},"run_48":{"type":"noul","noul":"very"}}}""",

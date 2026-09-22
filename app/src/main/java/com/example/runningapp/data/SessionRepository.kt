@@ -4958,8 +4958,22 @@ class SessionRepository(
                 }
                 is GraduationVerdict.Judged -> verdict
             }
+            // Where the verdict leaves the runner, resolved before the coach is asked rather than
+            // after it answers (#294, #514). The Stage after this one is what the graduation write
+            // below moves them to, and on the plan's last Stage there is none — so a coach told
+            // only "graduating" would congratulate them on a move the app is about to not make.
+            val stageAfterThisOne = TrainingPlanProvider.planHoldingStage(stageId)?.let { plan ->
+                plan.stages.indexOfFirst { it.id == stageId }
+                    .takeIf { it >= 0 }
+                    ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
+            }
+            val advance = when {
+                graduating.evidenceRunIds.isEmpty() -> StageAdvance.NONE
+                stageAfterThisOne == null -> StageAdvance.PLAN_FINISHED
+                else -> StageAdvance.TO_NEXT_STAGE
+            }
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
-            val response = coachClient.evaluateProgress(context, graduating.evidenceRunIds.isNotEmpty())
+            val response = coachClient.evaluateProgress(context, advance)
             if (response == null) {
                 // No new prescription is written — see evaluateProgress. But a prescription already
                 // standing keeps overriding the Stage's workout for up to 14 days, so on a fatigued
@@ -5019,13 +5033,9 @@ class SessionRepository(
             val graduated = evidenceRunIds.isNotEmpty()
 
             if (graduated) {
-                val plan = TrainingPlanProvider.planHoldingStage(stageId)
-
-                val nextStageId = plan
-                    ?.stages
-                    ?.indexOfFirst { it.id == stageId }
-                    ?.takeIf { it >= 0 }
-                    ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
+                // The Stage to move to, resolved once above and read here, so what the coach was
+                // told and what is written cannot describe different moves.
+                val nextStageId = stageAfterThisOne
 
                 // No prescription on a graduation: it would be intervals for the stage just left,
                 // and writing one only to clear it in the next breath leaves a window where a run

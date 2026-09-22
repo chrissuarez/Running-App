@@ -5285,6 +5285,53 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `graduating the last Stage of a plan is told to the coach as finishing the plan`() = runTest {
+        // There is no stage after this one, so the app writes no move (#294). A coach told only
+        // "graduating" would congratulate the runner on arriving somewhere they are not.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = FakeGraduationJudge.granting(),
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(
+                UserSettings(
+                    activePlanId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                    activeStageId = "desk_test_stage",
+                )
+            )
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any(), any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                coachMessage = "You have finished the plan."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("desk_test_stage", RunType.LONG)
+
+        verify(mockCoach).evaluateProgress(any(), eq(StageAdvance.PLAN_FINISHED))
+    }
+
+    @Test
     fun `with no coach to tell, the judge is never asked`() = runTest {
         // The judge is asked first and the debrief is told its answer, so a build with a TypeSafe
         // key and no Gemini key would send the runner's measurements out for a verdict nothing
