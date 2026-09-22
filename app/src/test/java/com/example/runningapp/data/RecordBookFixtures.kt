@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.flowOf
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 
 /**
  * The app's record book — [RecordBook] over [RoomRecordBookStore] — over whichever of its tables a
@@ -123,3 +124,14 @@ private fun theAppsRecordBook(
     ),
     refreshHistoryBackup = refreshHistoryBackup,
 )
+
+/**
+ * A coach mock that has a key, which is what nearly every evaluation test means by "a coach" (#514).
+ *
+ * `canBeAsked` has to be stubbed rather than left to Mockito's default `false`, because the
+ * evaluation now returns before asking the judge anything when there is no coach to tell the answer
+ * to — an unstubbed mock would silently skip the whole path under test.
+ */
+fun aCoachThatCanBeAsked(): AiCoachClient = mock<AiCoachClient>().also {
+    whenever(it.canBeAsked).thenReturn(true)
+}

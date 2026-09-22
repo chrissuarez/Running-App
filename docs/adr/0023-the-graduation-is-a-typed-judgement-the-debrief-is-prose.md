@@ -90,6 +90,11 @@ An empty answer is different and is not a failure. It is a judgement — these R
 requirement — and the evaluation carries on to write the debrief and the prescription under the
 Stage the runner is still in. That is the answer on nearly every run.
 
+The keys work the other way round too. A build with **no** `GEMINI_API_KEY` returns before the judge
+is asked anything: there is no coach to tell the answer to, so a judgement there would send the
+runner's measurements out for a verdict nothing could act on — no debrief, no prescription, and the
+graduation itself is only granted once the debrief has come back.
+
 A build with **no** `TYPESAFE_API_KEY` is different again, and follows the rule #76 already set: "we
 cannot ask" and "we asked and got nothing" are two different answers. No Stage graduates, and the
 coach goes on writing debriefs as before.
