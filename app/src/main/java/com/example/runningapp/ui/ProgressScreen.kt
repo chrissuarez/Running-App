@@ -244,20 +244,25 @@ private fun TodayCard(today: ProgressDay) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
-            // Fitness and Fatigue move the moment a Run is saved; Form does not, because Form is
-            // yesterday's Fitness less yesterday's Fatigue. Read side by side, that looks like one
-            // of the three failed to update, so the card says what Form is a statement about (#509).
+            // When Fitness and Fatigue move and Form does not, the three read as though one of them
+            // failed to update. Form is yesterday's Fitness less yesterday's Fatigue, so it is a
+            // statement about how today started, and this line says so (#509).
             //
-            // It promises nothing about a future Run, because every such promise has an exception:
-            // a Run that recorded no beats is never scored and reaches Form on no day at all, and
-            // editing or deleting an older Run moves every Form since it.
+            // Every word of it is load-bearing, and the review of #509 falsified four looser drafts
+            // before this one:
             //
-            // "A run you START today" and not "anything you do today": a Run is filed under the day
-            // it started, so one begun before midnight and finished after it carries the minutes run
-            // today into YESTERDAY's total — and therefore into today's Form. What is closed is the
-            // other direction, and it is closed by the arithmetic rather than by timing: `form` is
-            // read at the top of the day's step, before that day's effort is applied, so a Run filed
-            // under today can never move today's Form.
+            // "A run you START today", not "anything you do today" — a Run is filed under the day it
+            // started, so one begun before midnight carries the minutes run today into YESTERDAY's
+            // total, and therefore into today's Form.
+            //
+            // "is not in it", not "shows up tomorrow" — when it next shows up is a promise with
+            // exceptions (an unscored Run reaches the curves on no day; a scored Run of zero supplies
+            // the zero the curve already assumed), whereas this direction is closed by the arithmetic
+            // rather than by timing: `progressCurve` reads `form` at the top of the day's step,
+            // BEFORE that day's effort is applied. So a Run filed under today cannot move today's
+            // Form — whatever it scored, and whenever it was saved.
+            //
+            // Which Runs feed the curves at all is #526, and deliberately not summarised here.
             Text(
                 "Form shows how you start today. A run you start today is not in it.",
                 style = MaterialTheme.typography.bodySmall,
