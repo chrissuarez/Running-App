@@ -68,4 +68,9 @@ under the provenance lock before the write, and deliberately wider than the judg
 
 The Runs counted in the Stage Training Record are still not in `sourceRunIds`, so a graduation can
 still rest in part on a week whose Runs a later delete would not unwind. ADR 0023 accepted that for
-the same three reasons, and they are unchanged by asking one question instead of several.
+three reasons, and asking one question instead of several does not change any of them.
+
+It does change how much the record is carrying. Under the per-Run question the record was a
+counterweight beside a Run's own numbers; under the cohort question it is the main evidence a
+requirement written in weeks is answered from. That is not a new hole, but it is a bigger one, and
+it is raised on its own as **#519** rather than re-argued here.

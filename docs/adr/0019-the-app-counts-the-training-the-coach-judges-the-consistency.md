@@ -74,10 +74,11 @@ Run into a Walk and never back.
 ## What is still fenced
 
 - **The record names no Runs.** ~~A graduation still names timestamps out of the three Runs shown.~~
-  Superseded by [ADR 0023](./0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md): there
-  is no naming any more. The judge is asked one question per Run under that Run's own database id,
-  so nothing is copied out of a prompt and nothing has to be resolved back.
-  resolves to nothing and would refuse a graduation the runner earned.
+  Superseded by [ADR 0023](./0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md) and
+  [ADR 0024](./0024-the-requirement-is-judged-over-the-training-not-run-by-run.md): there is no
+  naming any more. The judge is asked one question about the Stage's training as a whole, over Runs
+  keyed by their own database ids, so nothing is copied out of a prompt and nothing has to be
+  resolved back.
 - **It counts and measures nothing.** It carries a date per Run and nothing else — no heart rate, no
   zone, no distance, no duration — so it can never answer a requirement written as a distance in a
   time, which is the coach's to judge in any case only where ADR 0016 has not already taken it away.

@@ -753,8 +753,8 @@ class AiCoachClientTest {
 
     @Test
     fun `the record is offered to the debrief, and to nothing else`() {
-        // Judging a requirement from it is the judge's now, per run, with the record beside the
-        // run in its state (#514). What is left here is the one thing the record was always
+        // Judging a requirement from it is the judge's now, with the record beside the Stage's
+        // Runs in its state (#514, #516). What is left here is the one thing the record was always
         // unambiguously good for: a debrief that knows how the stage has actually been going.
         val prompt = promptFor(oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining))
 

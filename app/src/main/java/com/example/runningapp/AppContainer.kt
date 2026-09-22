@@ -148,8 +148,8 @@ class AppContainer(context: Context) {
     }
 
     /**
-     * Who answers whether a Stage's requirement has been met (#514) — TypeSafe's System One, asked
-     * one typed question per candidate Run.
+     * Who answers whether a Stage's requirement has been met (#514, #516) — TypeSafe's System One,
+     * asked one typed question about the Stage's training as a whole.
      *
      * A missing TYPESAFE_API_KEY is not fatal and is not checked here: the judge reports itself
      * unaskable, no Stage graduates, and the coach goes on writing debriefs. Same bargain as
