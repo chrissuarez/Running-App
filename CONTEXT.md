@@ -91,9 +91,13 @@ never evidence)
 
 **Graduation Judge**:
 Who answers whether a Stage Requirement that holds a judgement has been met. One
-typed yes-or-no question per candidate Run, keyed by that Run's own database id,
+typed question per evaluation, put over the Stage's training as a whole — the
+Stage Training Record and the candidate Runs, each keyed by its own database id —
 answered with a calibrated probability rather than with text
-([ADR 0023](docs/adr/0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md)).
+([ADR 0023](docs/adr/0023-the-graduation-is-a-typed-judgement-the-debrief-is-prose.md),
+[ADR 0024](docs/adr/0024-the-requirement-is-judged-over-the-training-not-run-by-run.md)).
+It is one question and not one per Run because a Requirement about a span of weeks
+has no per-Run answer: no single Run shows four weeks of anything.
 It is asked before the coach writes anything, and the coach is then told the
 answer as a fact — so the debrief can say "you have finished this Stage" without
 the coach having any say in whether that is true. It is never asked about a Walk,
@@ -103,6 +107,8 @@ says no is an ordinary answer and the evaluation carries on.
 _Avoid_: graduation guard, evidence naming, naming the evidence (all three named
 the apparatus this replaced — the coach set a flag, copied timestamps back as its
 evidence, and the app resolved every name; none of that exists). Do not say the
+judge names, picks or points at the Run that graduated a Stage: it answers about
+the training and names no Run of it. Do not say the
 **coach** decides a graduation: the coach writes the debrief and prescribes the
 intervals, and decides nothing about a Stage.
 

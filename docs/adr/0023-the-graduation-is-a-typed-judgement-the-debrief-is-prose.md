@@ -60,6 +60,10 @@ What is still missing is the same measurement for the **weeks behind** the candi
 Training Record counts Runs and measures none of them, so "4 weeks of consistent Zone 2 training" is
 evidenced for the candidate Run and not for the weeks before it (#516).
 
+> **Superseded in part by [ADR 0024](./0024-the-requirement-is-judged-over-the-training-not-run-by-run.md).**
+> The one-question-per-Run shape could not answer a requirement about a span of weeks, so the judge
+> is now asked **one** question about the Stage's training as a whole. Everything else here stands.
+
 ## What this deletes
 
 - `GraduationEvidenceTimestampsAdapter`, and the whole class of failure where one unreadable field

@@ -538,9 +538,9 @@ data class AiTrainingContext(
 }
 
 /**
- * What came back when the Stage's requirement was put to the judge (#514).
+ * What came back when the Stage's requirement was put to the judge (#514, #516).
  *
- * [Unreachable] is not an empty [Judged]. An empty [Judged] is a judgement — these Runs do not meet
+ * [Unreachable] is not a [Judged] no. A [Judged] no is a judgement — this training does not meet
  * the requirement — and the evaluation carries on under the Stage the runner is still in.
  * [Unreachable] is no judgement at all, and the evaluation is thrown away rather than read as a no.
  */
@@ -548,8 +548,16 @@ private sealed interface GraduationVerdict {
     /** The judge could not be reached. Nothing is written. */
     object Unreachable : GraduationVerdict
 
-    /** The Runs that meet the requirement, which is empty far more often than not. */
-    data class Judged(val evidenceRunIds: Set<Long>) : GraduationVerdict
+    /**
+     * Whether the Stage's training meets its requirement — one answer about the whole Stage, which
+     * is a no far more often than not.
+     *
+     * One answer and not a set of Runs, because the requirement is about the training and not about
+     * any one Run of it (#516). What the graduation stands on is still named and still guarded: it
+     * is [AiTrainingContext.sourceRunIds], which `theEvidenceStillStands` re-checks under the
+     * provenance lock before anything is written.
+     */
+    data class Judged(val requirementIsMet: Boolean) : GraduationVerdict
 }
 
 data class Max30dLoad(
@@ -4759,7 +4767,7 @@ class SessionRepository(
     }
 
     /**
-     * Whether the Stage's requirement has been met, and on which Runs (#514).
+     * Whether the Stage's requirement has been met (#514, #516).
      *
      * Three answers, and the difference between the last two is the whole reason this is not a
      * boolean:
@@ -4767,15 +4775,16 @@ class SessionRepository(
      *   own ([AiTrainingContext.requirementIsTheAppsToAnswer], #290), already decided before this
      *   was called. It is never put to the judge, so the two paths can never both grant.
      * - **Nothing to answer it with.** A Stage with no qualifying Run behind it graduates on
-     *   nothing (#234, #275): an empty candidate list is a no without a question being asked.
+     *   nothing (#234, #275): no evidence is a no without a question being asked.
      * - **Nobody to ask.** A build with no key is a refusal and not a failure (#76) — no Stage is
      *   graduated, and the coach still writes the debrief. An ask that *failed* is different and is
      *   the one case that stops the whole evaluation, because a judgement nobody made must not be
      *   read as a no on a path where a wrong answer either way is expensive.
      *
-     * The returned ids are intersected back against the candidates, which is belt and braces: the
-     * judge is handed the app's own ids and answers under them, so an id it was never asked about
-     * has nowhere to have come from.
+     * One question about the whole Stage rather than one per Run (#516). A requirement like Stage
+     * 1's "4 weeks of consistent Zone 2 training" is about a span of training, and no single Run
+     * shows four weeks of anything — asked Run by Run, the only honest answer was no, so the Stage
+     * could never graduate. See ADR 0024.
      */
     private suspend fun judgeGraduation(context: AiTrainingContext, stageId: String): GraduationVerdict {
         if (context.requirementIsTheAppsToAnswer) {
@@ -4784,7 +4793,7 @@ class SessionRepository(
                 "Not asking the judge: stage=$stageId states its requirement in numbers, so the " +
                     "app answers it"
             )
-            return GraduationVerdict.Judged(emptySet())
+            return GraduationVerdict.Judged(requirementIsMet = false)
         }
         if (context.requirementEvidenceRuns.isEmpty()) {
             Log.d(
@@ -4792,22 +4801,21 @@ class SessionRepository(
                 "Not asking the judge: stage=$stageId has no run among the ${context.recentRuns.size} " +
                     "recent ones that could answer its requirement"
             )
-            return GraduationVerdict.Judged(emptySet())
+            return GraduationVerdict.Judged(requirementIsMet = false)
         }
         val judge = graduationJudge?.takeIf { it.canBeAsked }
         if (judge == null) {
             Log.w("AiCoach", "Not asking the judge: there is none to ask, so stage=$stageId cannot graduate")
-            return GraduationVerdict.Judged(emptySet())
+            return GraduationVerdict.Judged(requirementIsMet = false)
         }
-        val candidateIds = context.requirementEvidenceRuns.map { it.runId }.toSet()
-        val answered = judge.runsAnsweringRequirement(
+        val met = judge.requirementIsMet(
             GraduationQuestion(
                 requirement = context.graduationRequirement,
                 stageTraining = context.stageTraining,
                 candidates = context.requirementEvidenceRuns,
             )
         ) ?: return GraduationVerdict.Unreachable
-        return GraduationVerdict.Judged(answered intersect candidateIds)
+        return GraduationVerdict.Judged(requirementIsMet = met)
     }
 
     /**
@@ -4968,7 +4976,7 @@ class SessionRepository(
                     ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
             }
             val advance = when {
-                graduating.evidenceRunIds.isEmpty() -> StageAdvance.NONE
+                !graduating.requirementIsMet -> StageAdvance.NONE
                 stageAfterThisOne == null -> StageAdvance.PLAN_FINISHED
                 else -> StageAdvance.TO_NEXT_STAGE
             }
@@ -5026,11 +5034,10 @@ class SessionRepository(
             // stand in this place was a guard: the coach set a flag, named its evidence by copying
             // timestamps out of the prompt, and this code resolved every name back to a Run it had
             // shown — refusing the lot if one of them was a Walk, an Open Run, a Run nobody was
-            // shown, or a timestamp two Runs shared. None of that is needed once the question is
-            // asked per Run under the app's own id: a Walk is never asked about, so it can never be
-            // answered from, and there is no name to fail to resolve.
-            val evidenceRunIds = graduating.evidenceRunIds
-            val graduated = evidenceRunIds.isNotEmpty()
+            // shown, or a timestamp two Runs shared. None of that is needed once the judge is
+            // handed the evidence and asked one closed question about it: a Walk is never in the
+            // request, so it can never be answered from, and there is no name to fail to resolve.
+            val graduated = graduating.requirementIsMet
 
             if (graduated) {
                 // The Stage to move to, resolved once above and read here, so what the coach was
@@ -5059,11 +5066,12 @@ class SessionRepository(
                 // of the three gone is enough — which is the direction the app already errs in:
                 // graduating late rather than twice ([RunnerSession.ranUnderStageId]).
                 //
-                // Asked of all three rather than of [evidenceRunIds] alone, which is stricter and
-                // deliberately so (#287): the Runs the judge answered for are among these three, so
+                // Asked of all three (#287): the Runs put to the judge are among these three, so
                 // a delete taking one of *them* away is refused here either way, and a delete taking
                 // one of the others away still empties the history the requirement's "consistently"
-                // was read against.
+                // was read against. Since #516 the judge answers about the training as a whole and
+                // names no Run of it, which makes this the only guard there is — and it already
+                // covered everything the judge was shown.
                 //
                 // The message goes with it, and is not written on its own: "you have finished this
                 // stage" is not true if the Run that finished it has gone. Left behind on a refused
