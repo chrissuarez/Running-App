@@ -270,6 +270,19 @@ class StageGraduationJudgeTest {
     }
 
     @Test
+    fun `a bare run id is a key copied off the state, and answers nothing`() {
+        // `47` is the key of `state.runs.47`, not the key of the question `run_47`. Accepting it
+        // would be the graduation resting on the model copying a number again (#287) — which is
+        // the whole of what this change exists to end.
+        val answered = parseGraduationAnswers(
+            """{"answers":{"47":{"type":"noul","noul":0.99}}}""",
+            asked = setOf(47L),
+        )
+
+        assertNull(answered)
+    }
+
+    @Test
     fun `an answer with no readable probability is not a yes, and does not sink the readable ones`() {
         val answered = parseGraduationAnswers(
             """{"answers":{"run_47":{"type":"noul","noul":0.95},"run_48":{"type":"noul","noul":"very"}}}""",
