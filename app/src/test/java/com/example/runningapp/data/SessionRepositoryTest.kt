@@ -2624,7 +2624,7 @@ class SessionRepositoryTest {
     @Test
     fun `a graduation clears the prescription instead of writing one for the stage just left`() = runTest {
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -2716,7 +2716,7 @@ class SessionRepositoryTest {
         // later refactor reordering these two would have the coach prescribing into a Stage the
         // runner has already left.
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryWithRecordBook(
             sessionDao = mockDao,
             statedBestEffortDao = statedDao,
@@ -2754,7 +2754,7 @@ class SessionRepositoryTest {
         // Session` happens to return — a restored future-dated session is enough to make them
         // different rows, and the shareable one must not speak for the opted-out one (#290).
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryWithRecordBook(
             sessionDao = mockDao,
             statedBestEffortDao = statedDao,
@@ -2784,7 +2784,7 @@ class SessionRepositoryTest {
         // settings do not move under the second read, so the coach is asked — and the grant still
         // has to have happened first.
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryWithRecordBook(
             sessionDao = mockDao,
             statedBestEffortDao = statedDao,
@@ -2904,7 +2904,7 @@ class SessionRepositoryTest {
         // The prompt tells it not to, and a prompt sentence is a promise the code has to keep
         // (#286, #288): the two paths must never both be able to grant.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -3933,7 +3933,7 @@ class SessionRepositoryTest {
         // The finish hands it over; a launch paying the debt days later has only the row. Both must
         // reach the same answer, or a Long Run settled at launch would slip past the gate (#176).
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryForSettling(statedDao, mockCoach)
         // Stage 2's Long run, and a Run well short of the bar so the rule declines and the coach
         // is the only thing left to reach.
@@ -3948,7 +3948,7 @@ class SessionRepositoryTest {
     @Test
     fun `a Run that followed no Workout asks the coach nothing`() = runTest {
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryForSettling(statedDao, mockCoach)
         aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao, workoutId = null)
 
@@ -4100,7 +4100,7 @@ class SessionRepositoryTest {
         val statedDao: StatedBestEffortDao = mock()
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         // The Gemini round trip, held open for as long as the test wants it.
         val theCoachIsThinking = CompletableDeferred<Unit>()
         whenever(mockCoach.evaluateProgress(any(), any())).doSuspendableAnswer {
@@ -4152,7 +4152,7 @@ class SessionRepositoryTest {
         val statedDao: StatedBestEffortDao = mock()
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val shortOfTheBar = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 2_400)
         val qualifying = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 1_632)
         whenever(statedDao.getForSession(7L)).thenReturn(
@@ -4197,7 +4197,7 @@ class SessionRepositoryTest {
         val statedDao: StatedBestEffortDao = mock()
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val theCoachIsThinking = CompletableDeferred<Unit>()
         whenever(mockCoach.evaluateProgress(any(), any())).doSuspendableAnswer {
             theCoachIsThinking.await()
@@ -4747,7 +4747,7 @@ class SessionRepositoryTest {
     @Test
     fun `a Test that misses the bar is told how far off it was`() = runTest {
         val statedDao: StatedBestEffortDao = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = repositoryWithRecordBook(
             sessionDao = mockDao,
             statedBestEffortDao = statedDao,
@@ -4920,7 +4920,7 @@ class SessionRepositoryTest {
         // cannot be taken back, so the place that acts on one refuses it rather than trusting the
         // telling (#234). What the coach said still reaches the runner.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -4968,7 +4968,7 @@ class SessionRepositoryTest {
         // a promise the code has to keep — so the one place a graduation is acted on refuses one
         // resting on Walks alone, exactly as it refuses one resting on nothing (#275).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5013,7 +5013,7 @@ class SessionRepositoryTest {
         // neither progresses a Stage, because neither completed the structure the Stage asks for.
         // A Walk beside an Open Run leaves the evidence list empty, so the refusal stands (#275).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5065,7 +5065,7 @@ class SessionRepositoryTest {
         // So the evidence is however many Runs it took, and the check is unchanged in kind: every
         // name still has to be a Run the app agrees could answer the Stage.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5122,7 +5122,7 @@ class SessionRepositoryTest {
         // forbid and nothing to check: the question is never put (#514).
         val judge = FakeGraduationJudge.granting()
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5169,7 +5169,7 @@ class SessionRepositoryTest {
         // failure: the evaluation carries on and writes the prescription and the debrief under the
         // Stage the runner is still in.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5213,7 +5213,7 @@ class SessionRepositoryTest {
         // the whole evaluation is thrown away and the standing prescription is held at the workout,
         // which is exactly where an unreachable coach leaves it (#248, #514).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5252,7 +5252,7 @@ class SessionRepositoryTest {
         // moved on with no debrief behind it is a move the runner is never told about, and it
         // cannot be taken back. The standing prescription is held at the workout instead (#248).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5285,11 +5285,53 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `with no coach to tell, the judge is never asked`() = runTest {
+        // The judge is asked first and the debrief is told its answer, so a build with a TypeSafe
+        // key and no Gemini key would send the runner's measurements out for a verdict nothing
+        // could ever act on (#76, #514).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        whenever(mockCoach.canBeAsked).thenReturn(false)
+        val judge = FakeGraduationJudge.refusing()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = judge,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        // The question was never put — which is the assertion, because a judgement made here could
+        // never be acted on. Nothing is written either, as a build with no coach wrote nothing
+        // before there was a judge at all.
+        assertNull(judge.lastQuestion)
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+    }
+
+    @Test
     fun `with no judge to ask, no Stage graduates and the coach still writes`() = runTest {
         // A build with no TYPESAFE_API_KEY is a refusal and not a failure (#76): "we cannot ask"
         // and "we asked and got nothing" stay two different answers, and they end differently.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5338,7 +5380,7 @@ class SessionRepositoryTest {
         // requirement answered by a single Run or a pair of them can be the whole basis. Refused on
         // the partial delete, which errs towards graduating late rather than twice.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5412,7 +5454,7 @@ class SessionRepositoryTest {
         val testScope = this
         val order = mutableListOf<String>()
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5491,7 +5533,7 @@ class SessionRepositoryTest {
         // Stage could only graduate one the runner has already left or prescribe into a Stage this
         // Run never ran, so the coach is not asked at all.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5518,7 +5560,7 @@ class SessionRepositoryTest {
         // stored on one side and resolved on the other, every Run such a runner records would be
         // thrown away as evidence for a Stage they had left.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5573,7 +5615,7 @@ class SessionRepositoryTest {
         // the plan while this Long Run was still going, so the stage on the way out is one the Run
         // was never judged against — and its debrief would land on top of the graduation's own.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5614,7 +5656,7 @@ class SessionRepositoryTest {
         // the coach is not even asked about it. Nothing here stops it being recorded or counting
         // toward the 30-day load — those happen before an evaluation is ever considered.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5638,7 +5680,7 @@ class SessionRepositoryTest {
         // Six strides until it is changed by hand — an accepted gap (#176), and an AI does not
         // belong in the hard day at all.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5662,7 +5704,7 @@ class SessionRepositoryTest {
         // An unplanned Run, or one where today's plan was skipped: there is no Workout to name a
         // kind, and a prescription with no kind is the hazard the slots exist to prevent (#175).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5682,7 +5724,7 @@ class SessionRepositoryTest {
     @Test
     fun `a normal evaluation writes one prescription and touches no setting but the debrief`() = runTest {
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5746,7 +5788,7 @@ class SessionRepositoryTest {
         // time — the coach's *previous* answer — so a reply written afterwards would name a Run
         // nobody has, and no later delete could ever take it back.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5800,7 +5842,7 @@ class SessionRepositoryTest {
         // The other side of the refusal above: asking history again must not turn every ordinary
         // evaluation into a refused one.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5858,7 +5900,7 @@ class SessionRepositoryTest {
         val testScope = this
         val order = mutableListOf<String>()
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5925,7 +5967,7 @@ class SessionRepositoryTest {
         // The floor and the ceiling both measure the answer against this Workout, so the coach is
         // shown it before it answers (#246) — the same one resolved for the Run Type that finished,
         // not a second lookup that could drift from it.
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -5975,7 +6017,7 @@ class SessionRepositoryTest {
         // refused and given the Workout's own three numbers whole (#170), and the Workout it is held
         // to is the Long one because that is the kind of Run just finished (#176).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -6020,7 +6062,7 @@ class SessionRepositoryTest {
         // any — so the coach's 4 x 11 min, which clears the floor and would otherwise stand, is
         // replaced by stage 1's own Long run of 3 x (10 min + 2 min).
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
@@ -6086,7 +6128,7 @@ class SessionRepositoryTest {
         // be handed exactly the harder intervals the hold exists to take away — because the network
         // was down. Fatigue is measured on this side, so the hold does not need a reply.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
         val standing = CoachPrescription(
             targetZone = 3,
@@ -6130,7 +6172,7 @@ class SessionRepositoryTest {
         // altogether. Amending anyway would put last week's numbers over whatever the delete left,
         // under a provenance naming Runs those numbers were never reasoned from.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
             listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
@@ -6178,7 +6220,7 @@ class SessionRepositoryTest {
         val testScope = this
         val order = mutableListOf<String>()
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
             listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
@@ -6229,7 +6271,7 @@ class SessionRepositoryTest {
         // No hold to apply, so the no-response path is what it always was: an evaluation that failed
         // writes nothing, and last week's prescription goes on standing.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach, absorbed = true)
         whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
             flowOf(
@@ -6261,7 +6303,7 @@ class SessionRepositoryTest {
             // the hold would put them. Writing one would be the app inventing a prescription on a
             // day the coach said nothing.
             val mockPrescriptions: CoachPrescriptionRepository = mock()
-            val mockCoach: AiCoachClient = mock()
+            val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
             val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
             whenever(mockPrescriptions.prescriptionsFlow).thenReturn(flowOf(CoachPrescriptions.NONE))
             whenever(mockCoach.evaluateProgress(any(), any())).thenReturn(null)
@@ -6277,7 +6319,7 @@ class SessionRepositoryTest {
         // Past 14 days the workout is already what runs, so there is nothing to hold back — and a
         // write here would leave a fresh-looking record of a decision nobody made today.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
-        val mockCoach: AiCoachClient = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
         whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
             flowOf(

@@ -4848,6 +4848,15 @@ class SessionRepository(
     ) {
         val settingsRepo = settingsRepository ?: return
         val coachClient = aiCoachClient ?: return
+        // A build with no Gemini key writes nothing here, so nothing is asked of anybody (#76,
+        // #514). The judge is asked first and the debrief is told its answer, which means without a
+        // coach to tell, a judgement is a round trip that sends the runner's measurements out and
+        // can never be acted on: no prescription is written, and the graduation itself is only
+        // granted further down, once the debrief has come back.
+        if (!coachClient.canBeAsked) {
+            Log.d("AiCoach", "Skipping AI evaluation: there is no coach to tell the answer to. stageId=$stageId")
+            return
+        }
         if (runType == null || !runType.isCoachAdjusted) {
             Log.d(
                 "AiCoach",
