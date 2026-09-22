@@ -248,12 +248,13 @@ private fun TodayCard(today: ProgressDay) {
             // yesterday's Fitness less yesterday's Fatigue. Read side by side, that looks like one
             // of the three failed to update, so the card says what Form is a statement about (#509).
             //
-            // It promises what today's Run does, not that the number is fixed until midnight: a Run
-            // is filed under the day it STARTED, so one begun before midnight and saved after it
-            // lands on yesterday and moves today's Form at once — as does editing or deleting any
-            // older Run. Saying "it changes tomorrow" outright would be false in those cases.
+            // It describes what Form is and promises nothing about a future Run, because every such
+            // promise has an exception: a Run is filed under the day it STARTED, so one begun before
+            // midnight moves today's Form the moment it is saved; a Run that recorded no beats is
+            // never scored and so never reaches Form at all; and editing or deleting an older Run
+            // moves every Form since. "Nothing you do today is in it" survives all three.
             Text(
-                "Form shows how you start today. Today's run shows up in it tomorrow.",
+                "Form shows how you start today. Nothing you do today is in it.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
