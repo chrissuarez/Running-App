@@ -247,8 +247,13 @@ private fun TodayCard(today: ProgressDay) {
             // Fitness and Fatigue move the moment a Run is saved; Form does not, because Form is
             // yesterday's Fitness less yesterday's Fatigue. Read side by side, that looks like one
             // of the three failed to update, so the card says what Form is a statement about (#509).
+            //
+            // It promises what today's Run does, not that the number is fixed until midnight: a Run
+            // is filed under the day it STARTED, so one begun before midnight and saved after it
+            // lands on yesterday and moves today's Form at once — as does editing or deleting any
+            // older Run. Saying "it changes tomorrow" outright would be false in those cases.
             Text(
-                "Form shows how you start today. It changes tomorrow.",
+                "Form shows how you start today. Today's run shows up in it tomorrow.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
