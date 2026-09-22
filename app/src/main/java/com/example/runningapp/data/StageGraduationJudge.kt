@@ -357,6 +357,10 @@ internal fun parseGraduationAnswers(json: String, asked: Set<Long>): Set<Long>? 
     } ?: return null
 
     val readable = answers.entrySet().mapNotNull { (key, value) ->
+        // The key has to be one this app wrote, prefix and all. A bare `47` is a key copied off
+        // `state.runs` rather than an answer to `run_47`, and the whole of what the prefix is for
+        // is that an answer arrives under the name the question was asked under.
+        if (!key.startsWith(QUESTION_PREFIX)) return@mapNotNull null
         val runId = key.removePrefix(QUESTION_PREFIX).toLongOrNull() ?: return@mapNotNull null
         if (runId !in asked) return@mapNotNull null
         val noul = runCatching { value.asJsonObject.get("noul").asDouble }.getOrNull()
