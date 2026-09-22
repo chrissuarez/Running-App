@@ -1116,9 +1116,9 @@ class SessionRepositoryTest {
         // The collision that used to put a hole straight back (#287): the coach named its evidence
         // by timestamp, so two Runs starting at the same instant were ambiguous and BOTH had to be
         // dropped — a Walk sharing a start with a structured Run could otherwise hand the coach the
-        // Run under the Walk's number. Asking per Run under the app's own id settles it by never
-        // creating the ambiguity (#514): the Walk is simply not a candidate, and the two structured
-        // Runs are both asked about on their own.
+        // Run under the Walk's number. Keying the evidence by the app's own run id settles it by
+        // never creating the ambiguity (#514): the Walk is simply not a candidate, and both
+        // structured Runs go to the judge as the Stage's evidence.
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
             listOf(
                 aTreadmillRun(id = 10, seconds = 1_800).copy(isRunWalkMode = true, startTime = 5_000L),
@@ -2658,7 +2658,6 @@ class SessionRepositoryTest {
                 nextWalkDurationSeconds = 60,
                 nextRepeats = 5,
                 nextTargetZone = 3,
-                // Named, and it is the structured Run the Stage can be graduated on (#287).
                 coachMessage = "Stage complete."
             )
         )
@@ -5056,14 +5055,15 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `a requirement no single Run can meet is graduated on the Runs that together met it`() = runTest {
+    fun `a requirement no single Run can meet is graduated on the Stage's training as a whole`() = runTest {
         // The first stage of the beginner plan asks for "4 weeks of consistent Zone 2 training", and
-        // no single Run has ever met that or ever could. A rule demanding the coach name exactly one
-        // Run would have left this stage — the one Chris is actually on — impossible to finish: the
-        // obedient answer to "name the one run that met it" is "there isn't one", forever.
+        // no single Run has ever met that or ever could. Asked Run by Run, the obedient answer is
+        // "this one doesn't", forever — which left this stage, the one Chris is actually on,
+        // impossible to finish (#516).
         //
-        // So the evidence is however many Runs it took, and the check is unchanged in kind: every
-        // name still has to be a Run the app agrees could answer the Stage.
+        // So the question is put once, over the Stage's training: the evidence Runs and the Stage's
+        // own week-by-week record together. The answer names no Run, and the app's own rule about
+        // WHICH Runs may be in front of the judge is unchanged.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
         val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
         val repo = SessionRepository(
@@ -5098,7 +5098,6 @@ class SessionRepositoryTest {
                 nextWalkDurationSeconds = 60,
                 nextRepeats = 5,
                 nextTargetZone = null,
-                // The consistency, named run by run.
                 coachMessage = "Four consistent weeks. Stage complete."
             )
         )

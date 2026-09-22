@@ -451,12 +451,12 @@ data class AiTrainingContext(
      * be taken back and a label built for a prompt is not a thing to hang one on: reworded, the
      * check would silently stop refusing.
      *
-     * **This is the list of Runs the judge is asked about, and it is the only list.** A Walk or an
-     * Open Run is never in a question, so there is no rule needed to forbid answering from one, and
+     * **This is the list of Runs the judge is shown, and it is the only list.** A Walk or an Open
+     * Run is never in the request, so there is no rule needed to forbid answering from one, and
      * nothing to check afterwards. What replaced a whole apparatus — a map keyed by the timestamp
      * the coach was shown, a reply naming timestamps back digit for digit, an all-or-nothing resolve
-     * of those names, and the ambiguity of two Runs sharing a start — is that the question carries
-     * the app's own id and so does the answer (#287, #514).
+     * of those names, and the ambiguity of two Runs sharing a start — is that the app chooses the
+     * evidence and keys it by its own ids, and the answer names no Run at all (#287, #514, #516).
      */
     val requirementEvidenceRuns: List<GraduationCandidate> = emptyList(),
     /**
@@ -512,9 +512,9 @@ data class AiTrainingContext(
      * Unlike the weekly Effort totals in [fitnessAndForm], it is deliberately **not** fenced out of
      * the graduation: it counts the very Runs a graduation may rest on ([isStageEvidence], asked of
      * the whole Stage), measured by the app rather than estimated by the model. It travels in the
-     * judge's state beside each Run it is asked about (#514) — and the Runs asked about are still
-     * only those in [requirementEvidenceRuns], because those are the Runs whose numbers are there
-     * to judge.
+     * judge's state beside the Runs it is asked about (#514, #516) — and the Runs put to the judge
+     * are still only those in [requirementEvidenceRuns], because those are the Runs whose numbers
+     * are there to judge.
      *
      * **The residue, named rather than hidden.** A Prescription stands on the Runs it was shown, and
      * deleting one of them unwinds it (ADR 0013, #156). The Runs counted here are not in
@@ -687,12 +687,12 @@ class SessionRepository(
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
     /**
-     * Who decides whether a Stage's requirement has been met (#514).
+     * Who decides whether a Stage's requirement has been met (#514, #516).
      *
      * Separate from [aiCoachClient] because they are two different jobs asked of two different
      * services. The coach writes prose and prescribes intervals, which is what a generative model
-     * is right for. This answers one typed question per Run and returns a calibrated probability,
-     * which is what a decision that cannot be taken back needs.
+     * is right for. This answers one typed question about the Stage's training and returns a
+     * calibrated probability, which is what a decision that cannot be taken back needs.
      *
      * Null on every repository that was never given one, and a build with no key has a judge that
      * cannot be asked: both mean no Stage is ever graduated, and neither stops the coach writing a
@@ -4774,8 +4774,8 @@ class SessionRepository(
      * - **Not the judge's to answer.** A requirement written as a distance in a time is the app's
      *   own ([AiTrainingContext.requirementIsTheAppsToAnswer], #290), already decided before this
      *   was called. It is never put to the judge, so the two paths can never both grant.
-     * - **Nothing to answer it with.** A Stage with no qualifying Run behind it graduates on
-     *   nothing (#234, #275): no evidence is a no without a question being asked.
+     * - **Nothing to answer it with.** A Stage with no qualifying Run among the last three
+     *   graduates on nothing (#234, #275): no evidence is a no without a question being asked.
      * - **Nobody to ask.** A build with no key is a refusal and not a failure (#76) — no Stage is
      *   graduated, and the coach still writes the debrief. An ask that *failed* is different and is
      *   the one case that stops the whole evaluation, because a judgement nobody made must not be

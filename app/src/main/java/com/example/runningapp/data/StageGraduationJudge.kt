@@ -211,7 +211,7 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
     // zeroes, which is a thing to reason from where an absence is not. So the sentence pointing at
     // it has to go with it: an instruction naming `stageTrainingRecord` on a request that has no
     // such key is a path the model is sent to look down and finds nothing at.
-    val consistencyClause = when {
+    val trainingRecordSentence = when {
         question.stageTraining.isEmpty -> ""
         else -> " Read them together with `stageTrainingRecord`, which is the app's own count of " +
             "how much training this stage has held and is how a requirement written in weeks is " +
@@ -242,7 +242,7 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
                     "The runner is working toward this training stage's requirement: " +
                         "`requirement`. Judge whether the training this stage holds has met it. " +
                         "`runs` holds the stage's most recent qualifying runs, keyed by the app's " +
-                        "own run id, with what was measured for each." + consistencyClause +
+                        "own run id, with what was measured for each." + trainingRecordSentence +
                         " Judge the training as a whole, not any single run: a requirement about " +
                         "a span of weeks is met by the record of those weeks and not by one run, " +
                         "and a requirement about one performance is met the moment one run shows " +

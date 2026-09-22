@@ -116,7 +116,9 @@ the dated sections below this one are older and are kept as history.
     - **Graduating**: A Stage asks for something before it will let go of you. Where it is written in
       numbers — a 5K in a time — the app measures it and decides it, and the coach is fenced out;
       where it holds a judgement, such as "4 weeks of consistent Zone 2 training", the app puts that
-      judgement to a separate AI judge, one question per run (ADR 0023).
+      judgement to a separate AI judge, one question about the Stage's training as a whole
+      (ADR 0023, ADR 0024) — one and not one per run, because no single run shows four weeks of
+      anything.
       It is asked once you can no longer change what the run was, never at STOP, so a run you are
       about to mark a Walk cannot graduate anything. Granted forwards only, and the app never takes
       one back; the way back is the runner's own hand, off the Stage's card on the Training Plan
