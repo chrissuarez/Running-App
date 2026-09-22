@@ -245,19 +245,16 @@ private fun TodayCard(today: ProgressDay) {
                 fontWeight = FontWeight.Medium,
             )
             // Fitness and Fatigue move the moment a Run is saved; Form does not, because Form is
-            // yesterday's Fitness less yesterday's Fatigue (`progressCurve`). Without this line the
-            // three numbers look like one of them failed to update (#509).
+            // yesterday's Fitness less yesterday's Fatigue. Read side by side, that looks like one
+            // of the three failed to update, so the card says what Form is a statement about (#509).
             Text(
-                text = FormLagNote,
+                "Form shows how you start today. It changes tomorrow.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
-
-/** Why Form sits still on the day a Run is saved, while Fitness and Fatigue have already moved. */
-private const val FormLagNote = "Form shows how you start today. It changes tomorrow."
 
 /**
  * The one-line reading of Form: the band's own word, and what it says about the runner.
