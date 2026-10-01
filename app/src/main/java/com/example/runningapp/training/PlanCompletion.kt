@@ -10,9 +10,9 @@ import java.util.Locale
  * The moment a runner finished a whole Plan: they cleared the last Stage's Requirement, and there
  * was no Stage after it (#294).
  *
- * **Recorded, never derived.** Written at the instant the rule that answers a Requirement written
- * in numbers grants on a Plan's last Stage
- * ([com.example.runningapp.data.SessionRepository]), and never
+ * **Recorded, never derived.** Written at the instant a Plan's last Stage is granted — by the rule
+ * that answers a Requirement written in numbers, or by the Graduation Judge where the Requirement
+ * is a judgement (#517) ([com.example.runningapp.data.SessionRepository]) — and never
  * worked out from history afterwards. A pass that read "the last Stage's bar is beaten somewhere in
  * history, so the plan is complete" would hand the runner the end of their plan retroactively, on
  * evidence recorded under other rules — the one act
@@ -35,10 +35,9 @@ data class PlanCompletion(
      * Which Plan was finished. Kept so that switching to another Plan and back cannot make one
      * Plan's completion read as a claim about a different one.
      *
-     * Storage holds one of these, not one per Plan, because exactly one Plan can be finished: a
-     * completion is granted only by a Requirement written in numbers, and the app ships one Plan
-     * that has one. A second such Plan would need a completion kept per Plan — this slot would hand
-     * the runner the end of the second plan by taking away the end of the first.
+     * Storage holds one of these, not one per Plan, because one slot holds the fact: finishing a
+     * second Plan hands the runner the end of that plan by taking away the end of the first. The
+     * app ships one real Plan, so a per-Plan record waits for a second one.
      */
     val planId: String,
     /**
@@ -55,13 +54,17 @@ data class PlanCompletion(
     /**
      * The effort that cleared the bar, in whole seconds — the runner's own time, not the bar it was
      * enough for. Whole seconds because that is what a Best Effort is ranked in.
+     *
+     * Null where the last Stage was granted on a judgement (#517): nothing was timed, so there is
+     * no time to keep, and the card names only the day.
      */
-    val seconds: Int,
+    val seconds: Int?,
 )
 
 /**
  * What the completed Stage's card says in place of its Requirement (#294): *"Completed 14 August
- * 2026 — you ran 5 km in 24:52."*
+ * 2026 — you ran 5 km in 24:52."* — or only *"Completed 30 September 2026."* where the Stage was
+ * granted on a judgement (#517).
  *
  * The whole sentence comes from the stored completion and the Stage's own Requirement. It asks
  * history nothing — the record book holds the runner's *best*, which is a different fact and one
@@ -71,9 +74,12 @@ data class PlanCompletion(
  * noise. This is the one moment the plan existed to produce, and a card that reads "14 August" for
  * a plan finished two summers ago is quietly overstating how recently it happened.
  */
-fun planCompleteLine(completion: PlanCompletion, requirement: BestEffortRequirement): String {
-    val distance = requirement.distanceLabel
+fun planCompleteLine(completion: PlanCompletion, requirement: BestEffortRequirement?): String {
     val day = LocalDate.ofEpochDay(completion.completedOnEpochDay)
         .format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault()))
-    return "Completed $day — you ran $distance in ${asClock(completion.seconds.toDouble())}."
+    // A plan finished on a judgement (#517): no time was kept and no distance was the bar, so the
+    // day is the whole of what the card can truthfully say.
+    val seconds = completion.seconds ?: return "Completed $day."
+    if (requirement == null) return "Completed $day."
+    return "Completed $day — you ran ${requirement.distanceLabel} in ${asClock(seconds.toDouble())}."
 }

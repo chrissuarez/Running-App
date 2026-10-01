@@ -243,7 +243,9 @@ internal fun buildEvaluationPrompt(
         // no stage after this one, so the app has moved them nowhere — told they were moved on,
         // the coach would write the runner into a stage that does not exist.
         appendLine("The app has judged that the runner has now met this stage's requirement, and this was the last stage of the whole training plan — so they have finished the plan itself. Say so in coachMessage and congratulate them on finishing the plan. They have not moved to a next stage and there is not one: do not mention moving on. They keep this stage as an ongoing routine.")
-    } else {
+    } else if (!context.planComplete) {
+        // Left out on a finished plan (#517): the line above has already told the coach the runner
+        // finished this stage, and this one would forbid it from saying so.
         appendLine("Whether this stage's requirement has been met is the app's to decide and not yours. The app has not moved the runner on: do not tell them they have finished this stage or moved to a next one, and do not tell them they have failed it either.")
     }
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")

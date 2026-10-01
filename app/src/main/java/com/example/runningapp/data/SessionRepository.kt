@@ -4686,6 +4686,7 @@ class SessionRepository(
                     seconds = seconds.roundToInt(),
                 ),
                 message = planCompleteMessage(stage.title, requirement, seconds, plan.name),
+                author = DebriefAuthor.APP,
                 scope = scope,
             )
             Log.i(
@@ -4808,6 +4809,13 @@ class SessionRepository(
                 "Not asking the judge: stage=$stageId states its requirement in numbers, so the " +
                     "app answers it"
             )
+            return GraduationVerdict.Judged(requirementIsMet = false)
+        }
+        // The plan is already finished (#517): this is its last Stage and it was granted once. Once
+        // is the rule (#294), so there is nothing left to ask — asked anyway, every later Long Run
+        // would be judged and congratulated as finishing the plan again.
+        if (context.planComplete) {
+            Log.d("AiCoach", "Not asking the judge: stage=$stageId is the last of a plan already finished")
             return GraduationVerdict.Judged(requirementIsMet = false)
         }
         if (context.requirementEvidenceRuns.isEmpty()) {
@@ -5100,12 +5108,40 @@ class SessionRepository(
                     // is a judgement — so the card names the coach over them (#296). Written with
                     // the move and not before it: this lock holds off a delete, and it holds off no
                     // other writer of the same slot ([SettingsRepository.graduateStage]).
-                    settingsRepo.graduateStage(
-                        nextStageId,
-                        clampedResponse.coachMessage,
-                        DebriefAuthor.COACH,
-                        scope
+                    if (nextStageId != null) {
+                        settingsRepo.graduateStage(
+                            nextStageId,
+                            clampedResponse.coachMessage,
+                            DebriefAuthor.COACH,
+                            scope
+                        )
+                        return@withLock
+                    }
+                    // The plan's last Stage: the runner has finished the whole plan (#517). The
+                    // same event the numbers path records ([graduateOnBestEffortRequirement]),
+                    // and written the same way — the completion and the words in one write, inside
+                    // this lock, so a delete cannot land between the evidence check and the fact.
+                    //
+                    // As there, nothing moves and the standing Prescription is left alone: the
+                    // runner keeps this Stage as their routine. The coach was told PLAN_FINISHED,
+                    // so its words already say the plan is done.
+                    //
+                    // No time: a judgement timed nothing, so the card names only the day. The day
+                    // is the Run's own, for the reason the numbers path gives (#304).
+                    val plan = TrainingPlanProvider.planHoldingStage(stageId) ?: return@withLock
+                    val completedOn = (consentingRun?.ranOn(ZoneId.systemDefault())
+                        ?: LocalDate.now()).toEpochDay()
+                    settingsRepo.completePlan(
+                        completion = PlanCompletion(
+                            planId = plan.id,
+                            completedOnEpochDay = completedOn,
+                            seconds = null,
+                        ),
+                        message = clampedResponse.coachMessage,
+                        author = DebriefAuthor.COACH,
+                        scope = scope,
                     )
+                    Log.i("AiCoach", "The judge granted the last stage=$stageId: plan=${plan.id} is finished (#517)")
                 }
             } else {
                 // The numbers, the debrief that explains them, and the Runs they were reasoned from,

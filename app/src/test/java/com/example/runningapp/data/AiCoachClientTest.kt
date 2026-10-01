@@ -507,6 +507,17 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `a finished plan is not told the runner has yet to finish the stage`() {
+        // #517. Once the plan is finished on a judgement, every later Long Run is asked with no
+        // advance. The "not moved on" line would tell the coach not to say they have finished this
+        // stage, which is the opposite of the finished-plan line above it.
+        val prompt = promptFor(oneRunWalkSession.copy(planComplete = true))
+
+        assertTrue(prompt.contains("finished this whole training plan"))
+        assertFalse(prompt.contains("do not tell them they have finished this stage"))
+    }
+
+    @Test
     fun `a plan still under way says nothing about being finished`() {
         val prompt = promptFor(
             oneRunWalkSession.copy(requirementIsTheAppsToAnswer = true)
