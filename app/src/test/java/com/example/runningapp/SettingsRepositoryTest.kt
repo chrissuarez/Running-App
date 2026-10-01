@@ -356,7 +356,11 @@ class SettingsRepositoryTest {
         // card names the coach. Nothing was timed, so no time is stored — and the completion still
         // reads back whole.
         val preferences = mutablePreferencesOf()
-        val completion = PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = null)
+        val completion = PlanCompletion(
+            planId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+            completedOnEpochDay = 20_000L,
+            seconds = null,
+        )
 
         preferences.completePlanOnce(completion, "You have finished the plan.", DebriefAuthor.COACH)
 
@@ -364,6 +368,37 @@ class SettingsRepositoryTest {
         assertNull(preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS])
         assertEquals("You have finished the plan.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
         assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a completion with no time is not stored for a Plan whose last Stage is timed`() {
+        // Codex on #531. An archive whose completion lost its time reads back with a null one, and
+        // a null time is what a judged finish looks like. The 5K plan's last Stage is a time, so it
+        // was never finished on a judgement: believed, the runner's plan would be marked finished on
+        // nothing, its graduation switched off for good.
+        val preferences = mutablePreferencesOf()
+
+        preferences.writePlanCompletion(
+            PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = null)
+        )
+
+        assertNull(planCompletionOf(preferences))
+    }
+
+    @Test
+    fun `a completion with a time is not stored for a Plan whose last Stage is a judgement`() {
+        // The same rule the other way round: a judgement timed nothing (#517).
+        val preferences = mutablePreferencesOf()
+
+        preferences.writePlanCompletion(
+            PlanCompletion(
+                planId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                completedOnEpochDay = 20_000L,
+                seconds = 1_500,
+            )
+        )
+
+        assertNull(planCompletionOf(preferences))
     }
 
     @Test
