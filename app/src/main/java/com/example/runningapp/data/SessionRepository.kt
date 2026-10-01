@@ -532,24 +532,27 @@ data class AiTrainingContext(
      * are still only those in [requirementEvidenceRuns], because those are the Runs whose numbers
      * are there to judge.
      *
-     * **The residue, named rather than hidden.** A Prescription stands on the Runs it was shown, and
-     * deleting one of them unwinds it (ADR 0013, #156). The Runs counted here are not in
-     * [sourceRunIds] and so are not in that provenance, which means a graduation can rest in part on
-     * a Run whose later deletion unwinds nothing. Three reasons it stays that way, and the ADR's own
-     * argument is the first: what the ADR excludes is a Run that only moved a *measurement* — the
-     * Fitness and Fatigue curves — and this is a count of Runs, not a description of any one of
-     * them. Second, nothing re-judges a graduation once it is granted (#290), so there is nothing
-     * for a deletion to unwind on that side; what #156 unwinds is a standing Prescription, which
-     * still stands on the three Runs it was shown. The runner's own move back (ADR 0020, #235) does
-     * not change that — it moves where they stand and re-judges no Run. Third, putting the counted Runs into [sourceRunIds]
-     * would throw a sound Prescription away because one Run of a twenty-Run Stage was deleted — a
-     * far worse trade than the one this leaves open.
+     * **Guarded for the graduation, not for the Prescription (#519).** Since #516 the judge answers
+     * about the Stage's training as a whole, so this count is the main evidence a graduation rests
+     * on, and a delete landing during the round trip changes the weeks it was granted on. So the
+     * Runs counted here are named in [stageTrainingRunIds], and the graduation re-checks them under
+     * the provenance lock and is refused if one has gone. They are kept out of [sourceRunIds] on
+     * purpose: a Prescription stands on the three Runs it was shown (ADR 0013, #156), and putting
+     * a twenty-Run Stage's every Run there would throw a sound one away because one old Run was
+     * deleted. A delete *after* the graduation unwinds nothing, which is ADR 0020 working: nothing
+     * re-judges a graduation once it is granted.
      *
      * [StageTrainingRecord.NONE] where the Stage has no qualifying Run behind it, and the prompt
      * then says nothing about weeks at all rather than saying there are none — the empty case is
      * already spelled out by the rule about an empty [recentRuns].
      */
     val stageTraining: StageTrainingRecord = StageTrainingRecord.NONE,
+    /**
+     * The Runs [stageTraining] counted, by id (#519) — what a graduation re-checks under the
+     * provenance lock beside [sourceRunIds], so that a delete changing the count refuses it. Never
+     * read by the Prescription's guard: see [stageTraining].
+     */
+    val stageTrainingRunIds: Set<Long> = emptySet(),
 ) {
 }
 
@@ -570,8 +573,8 @@ private sealed interface GraduationVerdict {
      *
      * One answer and not a set of Runs, because the requirement is about the training and not about
      * any one Run of it (#516). What the graduation stands on is still named and still guarded: it
-     * is [AiTrainingContext.sourceRunIds], which `theEvidenceStillStands` re-checks under the
-     * provenance lock before anything is written.
+     * is [AiTrainingContext.sourceRunIds] and [AiTrainingContext.stageTrainingRunIds] (#519), which
+     * `theEvidenceStillStands` re-checks under the provenance lock before anything is written.
      */
     data class Judged(val requirementIsMet: Boolean) : GraduationVerdict
 }
@@ -3553,10 +3556,10 @@ class SessionRepository(
         // the sheet can turn a Run into a Walk and never back, so a stored row that already fails
         // [isStageEvidence] fails it after the sheet too.
         val notEvidenceAfterAll = finalizedRun?.takeIf { !it.isStageEvidence }?.id
+        val countedRuns = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
+            .filterNot { it.id == notEvidenceAfterAll }
         val stageTraining = stageTrainingRecordOf(
-            runs = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
-                .filterNot { it.id == notEvidenceAfterAll }
-                .map { it.asEvidenceRun(zone) },
+            runs = countedRuns.map { it.asEvidenceRun(zone) },
             through = today,
         )
 
@@ -3607,7 +3610,8 @@ class SessionRepository(
             ),
             stageWorkout = stageWorkout,
             goals = goalProgress,
-            stageTraining = stageTraining
+            stageTraining = stageTraining,
+            stageTrainingRunIds = countedRuns.map { it.id }.toSet(),
         )
     }
 
@@ -5098,8 +5102,12 @@ class SessionRepository(
                 // a delete taking one of *them* away is refused here either way, and a delete taking
                 // one of the others away still empties the history the requirement's "consistently"
                 // was read against. Since #516 the judge answers about the training as a whole and
-                // names no Run of it, which makes this the only guard there is — and it already
-                // covered everything the judge was shown.
+                // names no Run of it, so the guard has to cover everything the judge was shown.
+                //
+                // And the weeks (#519): the judge also reads the Stage's training record, which
+                // counts Runs far older than these three. A delete taking one of those away changes
+                // the count the graduation was granted on, so they are asked about here too — for
+                // the graduation alone, never for the reply below.
                 //
                 // The message goes with it, and is not written on its own: "you have finished this
                 // stage" is not true if the Run that finished it has gone. Left behind on a refused
@@ -5107,6 +5115,13 @@ class SessionRepository(
                 // with nothing under it and nothing to take it back either.
                 coachingProvenance.withLock {
                     if (!theEvidenceStillStands(context.sourceRunIds, refusing = "the graduation")) {
+                        return
+                    }
+                    if (!theEvidenceStillStands(
+                            context.stageTrainingRunIds - context.sourceRunIds,
+                            refusing = "the graduation (its weeks of training)"
+                        )
+                    ) {
                         return
                     }
                     // The coach's own words, come back from Gemini about a Stage whose requirement

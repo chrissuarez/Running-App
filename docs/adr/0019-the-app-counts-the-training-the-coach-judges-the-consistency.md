@@ -111,3 +111,7 @@ a deletion to undo — and the runner's own way back
 rather than a re-judgement, so it does not change that; what #156 unwinds is a standing
 Prescription, and that still stands on the three Runs it was shown. And putting twenty counted Runs into the provenance would throw a sound Prescription away
 because one of them was deleted — a worse trade than the one this leaves open.
+
+Narrowed by [ADR 0026](./0026-a-graduation-is-refused-when-a-delete-changes-its-weeks.md) (#519): the
+counted Runs now guard the graduation alone, so a delete during the round trip refuses it while the
+Prescription's provenance stays the three Runs it was shown.

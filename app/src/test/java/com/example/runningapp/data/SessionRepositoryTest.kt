@@ -5634,6 +5634,124 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a week's Run deleted while the judge was thinking has the graduation refused`() = runTest {
+        // The record a graduation rests on is wider than the three Runs the coach is shown (#519).
+        // Since #516 the judge answers about the Stage's training as a whole, so the weeks counted
+        // in [AiTrainingContext.stageTraining] are the main evidence for "4 weeks of consistent
+        // training" — and a Run from week 1 that leaves history during the round trip changes the
+        // count the graduation was granted on. Nothing takes a graduation back, so it is refused.
+        //
+        // The Prescription side is left alone on purpose: a standing Prescription still stands on
+        // the three Runs it was shown, and the next test proves an un-graduating evaluation does
+        // not care about the deleted week.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = FakeGraduationJudge.granting()
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+            )
+        )
+        // Run 9 is in week 1 of the record and not among the Runs the coach is shown.
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-09-01", id = 9), aStageEvidenceDay("2026-09-29", id = 1))
+            )
+        }
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        mockCoach.stub {
+            onBlocking { evaluateProgress(any(), any()) }.doSuspendableAnswer {
+                mockDao.stub {
+                    onBlocking { getAiEligibleIdsIn(any()) }
+                        .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 9L } }
+                }
+                AiCoachResponse(
+                    nextRunDurationSeconds = 360,
+                    nextWalkDurationSeconds = 60,
+                    nextRepeats = 5,
+                    coachMessage = "Stage complete."
+                )
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockCoach).evaluateProgress(any(), any())
+        verify(mockSettingsRepo, never()).graduateStage(anyOrNull(), any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `a week's Run deleted mid-evaluation does not refuse a Prescription`() = runTest {
+        // The other half of #519: the record is guarded for the graduation alone. A Prescription
+        // stands on the three Runs it was shown (#156), and a twenty-Run Stage must not lose a
+        // sound one because a Run from week 1 was deleted.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = FakeGraduationJudge.refusing()
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+            )
+        )
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-09-01", id = 9), aStageEvidenceDay("2026-09-29", id = 1))
+            )
+        }
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        mockCoach.stub {
+            onBlocking { evaluateProgress(any(), any()) }.doSuspendableAnswer {
+                mockDao.stub {
+                    onBlocking { getAiEligibleIdsIn(any()) }
+                        .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 9L } }
+                }
+                AiCoachResponse(
+                    nextRunDurationSeconds = 360,
+                    nextWalkDurationSeconds = 60,
+                    nextRepeats = 5,
+                    coachMessage = "Good work."
+                )
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockPrescriptions).prescribe(any(), any(), any(), any(), any())
+    }
+
+    @Test
     fun `a delete cannot land between the coach's last look at history and its graduation`() = runTest {
         // What the lock is for on this ending, and the one thing a second read on its own cannot do
         // (#156). The evaluation asks history again after the round trip and is told both Runs are

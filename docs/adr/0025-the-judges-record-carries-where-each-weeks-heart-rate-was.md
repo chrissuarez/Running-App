@@ -82,3 +82,6 @@ no, the safe side. It was left out because every number above was measured witho
 The record's Runs are still outside `sourceRunIds` (#519). ADR 0019 accepted that partly because the
 record was "a count of Runs, not a description of one". It is now a description of each week, so
 that argument is weaker. Deleting a Run still unwinds no graduation. #519 already carries that.
+
+Since [ADR 0026](./0026-a-graduation-is-refused-when-a-delete-changes-its-weeks.md) a delete
+landing during the judge's round trip refuses the graduation. One landing after it unwinds nothing.
