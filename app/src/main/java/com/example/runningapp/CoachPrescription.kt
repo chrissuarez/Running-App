@@ -130,8 +130,9 @@ private fun coachDebriefKey(generation: CoachWorkGeneration) = when (generation)
  *
  * One slot holds the text the runner reads after a Run, and two different writers put things in it:
  * the coach, whose words came back from Gemini, and the app itself, which writes a graduation, a
- * Plan finished, or a Test missed in its own words because a requirement written in numbers is not
- * the coach's to judge ([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
+ * Plan finished, or a Test missed in its own words where the requirement is written in numbers,
+ * because such a requirement is not the coach's to judge. A Plan finished on a judgement carries the
+ * coach's words and the coach's name (#517) ([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
  * Without a name on it the screen has to guess, and it guessed "AI Coach Debrief" over every one of
  * them — handing back, in the one place the runner actually looks, the attribution the design took
  * away. A runner with AI sharing switched off was being congratulated by a coach they never turned

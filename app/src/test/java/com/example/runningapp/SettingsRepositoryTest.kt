@@ -339,7 +339,8 @@ class SettingsRepositoryTest {
 
         preferences.completePlanOnce(
             PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
-            "You ran 5 km in 27:12. That is the whole of 5K Sub-25."
+            "You ran 5 km in 27:12. That is the whole of 5K Sub-25.",
+            DebriefAuthor.APP
         )
 
         assertEquals(
@@ -369,11 +370,11 @@ class SettingsRepositoryTest {
     fun `a Plan already finished is not congratulated again`() {
         val preferences = mutablePreferencesOf()
         val completion = PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632)
-        preferences.completePlanOnce(completion, "That is the whole of 5K Sub-25.")
+        preferences.completePlanOnce(completion, "That is the whole of 5K Sub-25.", DebriefAuthor.APP)
         // The coach's ordinary debrief, written about a Run after the Plan was finished.
         preferences.writeStandingDebrief("Steady all the way through.", DebriefAuthor.COACH)
 
-        preferences.completePlanOnce(completion.copy(seconds = 1_500), "That is the whole of 5K Sub-25.")
+        preferences.completePlanOnce(completion.copy(seconds = 1_500), "That is the whole of 5K Sub-25.", DebriefAuthor.APP)
 
         // Neither the day and time it records nor the words on screen are moved by a second
         // qualifying Run — including the name over them.
@@ -497,7 +498,8 @@ class SettingsRepositoryTest {
         preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
         preferences.completePlanOnce(
             PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
-            "That is the whole of 5K Sub-25."
+            "That is the whole of 5K Sub-25.",
+            DebriefAuthor.APP
         )
 
         preferences.moveBackToStage("5k_sub_25", "sub_30_bridge", movedBackMessage("Stage 2: Sub-30 Bridge"))
@@ -514,7 +516,8 @@ class SettingsRepositoryTest {
         val preferences = mutablePreferencesOf()
         preferences.completePlanOnce(
             PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
-            "That is the whole of 5K Sub-25."
+            "That is the whole of 5K Sub-25.",
+            DebriefAuthor.APP
         )
 
         preferences.cancelCompletionOf("5k_sub_25")
@@ -527,7 +530,8 @@ class SettingsRepositoryTest {
         val preferences = mutablePreferencesOf()
         preferences.completePlanOnce(
             PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
-            "That is the whole of 5K Sub-25."
+            "That is the whole of 5K Sub-25.",
+            DebriefAuthor.APP
         )
 
         preferences.cancelCompletionOf(TrainingPlanProvider.DESK_TEST_PLAN_ID)
@@ -544,7 +548,8 @@ class SettingsRepositoryTest {
         preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
         preferences.completePlanOnce(
             PlanCompletion(planId = "couch_to_5k", completedOnEpochDay = 19_000L, seconds = 2_100),
-            "That is the whole of Couch to 5K."
+            "That is the whole of Couch to 5K.",
+            DebriefAuthor.APP
         )
 
         preferences.moveBackToStage("5k_sub_25", "sub_30_bridge", movedBackMessage("Stage 2: Sub-30 Bridge"))

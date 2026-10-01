@@ -4993,13 +4993,18 @@ class SessionRepository(
             // after it answers (#294, #514). The Stage after this one is what the graduation write
             // below moves them to, and on the plan's last Stage there is none — so a coach told
             // only "graduating" would congratulate them on a move the app is about to not make.
-            val stageAfterThisOne = TrainingPlanProvider.planHoldingStage(stageId)?.let { plan ->
+            //
+            // The plan is resolved once here and carried to the write (#517), so the coach is told
+            // PLAN_FINISHED only where the write below has a plan to record as finished.
+            val planOfStage = TrainingPlanProvider.planHoldingStage(stageId)
+            val stageAfterThisOne = planOfStage?.let { plan ->
                 plan.stages.indexOfFirst { it.id == stageId }
                     .takeIf { it >= 0 }
                     ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
             }
             val advance = when {
                 !graduating.requirementIsMet -> StageAdvance.NONE
+                planOfStage == null -> StageAdvance.NONE
                 stageAfterThisOne == null -> StageAdvance.PLAN_FINISHED
                 else -> StageAdvance.TO_NEXT_STAGE
             }
@@ -5060,7 +5065,7 @@ class SessionRepository(
             // shown, or a timestamp two Runs shared. None of that is needed once the judge is
             // handed the evidence and asked one closed question about it: a Walk is never in the
             // request, so it can never be answered from, and there is no name to fail to resolve.
-            val graduated = graduating.requirementIsMet
+            val graduated = advance != StageAdvance.NONE
 
             if (graduated) {
                 // The Stage to move to, resolved once above and read here, so what the coach was
@@ -5128,7 +5133,7 @@ class SessionRepository(
                     //
                     // No time: a judgement timed nothing, so the card names only the day. The day
                     // is the Run's own, for the reason the numbers path gives (#304).
-                    val plan = TrainingPlanProvider.planHoldingStage(stageId) ?: return@withLock
+                    val plan = planOfStage ?: return@withLock
                     val completedOn = (consentingRun?.ranOn(ZoneId.systemDefault())
                         ?: LocalDate.now()).toEpochDay()
                     settingsRepo.completePlan(

@@ -207,9 +207,8 @@ internal object PreferencesKeys {
     val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
     val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
     val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
-    // The Plan the runner has finished, and what finished it (#294). Three keys because a
-    // completion is three facts, written and read as one — see [planCompletionOf]. The time is
-    // absent where a judgement finished the Plan (#517).
+    // The Plan the runner has finished, and what finished it (#294). Written and read as one —
+    // see [planCompletionOf]. The time key is absent where a judgement finished the Plan (#517).
     val PLAN_COMPLETE_PLAN_ID = stringPreferencesKey("plan_complete_plan_id")
     val PLAN_COMPLETE_DAY = longPreferencesKey("plan_complete_day")
     val PLAN_COMPLETE_SECONDS = intPreferencesKey("plan_complete_seconds")
@@ -460,18 +459,18 @@ private val PLAN_COMPLETION_DAYS = 1L..LocalDate.MAX.toEpochDay()
 
 /**
  * Stores a Plan the runner has finished, or takes all three keys away where there is none — the
- * whole fact in one write, which is what makes [planCompletionOf]'s all-or-none read true.
+ * whole fact in one write, which is what makes [planCompletionOf]'s read true.
  */
 internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?) {
-    // A completion missing any of its three parts is no completion, the same reading
-    // [planCompletionOf] gives half a trio of keys. It cannot be built in Kotlin, but it can
-    // arrive: an archive is JSON read by Gson, which fills a field a truncated document never
-    // mentioned — with null whatever a reference type says, and with a silent 0 for a Long or an
-    // Int, which is why the day and the time are checked and not only the Plan. An absent time is
-    // allowed — a Plan finished on a judgement kept none (#517) — but a time of 0 or less never
-    // came from a Run. A completion stored
-    // out of those defaults would put the runner's finest afternoon on 1 January 1970 in 0:00, and
-    // a day far enough out of range would make the card throw rather than read wrong.
+    // A completion missing its Plan or its day is no completion, the same reading
+    // [planCompletionOf] gives. It cannot be built in Kotlin, but it can arrive: an archive is JSON
+    // read by Gson, which fills a field a truncated document never mentioned — with null whatever a
+    // reference type says, and with a silent 0 for a Long, which is why the day is checked and not
+    // only the Plan. Stored, that default would put the runner's finest afternoon on 1 January 1970,
+    // and a day far enough out of range would make the card throw rather than read wrong.
+    //
+    // The time may be absent: a Plan finished on a judgement kept none (#517), so a missing time
+    // reads as that, and the card names only the day. A time of 0 or less never came from a Run.
     //
     // Refused here rather than at the read, so one malformed field costs a restore a fact it never
     // really had instead of costing it the whole archive.
@@ -581,7 +580,7 @@ internal fun activePlanAndStage(planId: String?, stageId: String?): Pair<String?
 internal fun MutablePreferences.completePlanOnce(
     completion: PlanCompletion,
     message: String,
-    author: DebriefAuthor = DebriefAuthor.APP,
+    author: DebriefAuthor,
 ) {
     if (planCompletionOf(this)?.planId == completion.planId) return
     writePlanCompletion(completion)
