@@ -62,7 +62,9 @@ carried a set of Run ids, because the answer is about the training and not about
 Nothing was resting on those ids. What a graduation is guarded by is
 `AiTrainingContext.sourceRunIds` — the three Runs the whole evaluation was reasoned from, re-checked
 under the provenance lock before the write, and deliberately wider than the judge's answer ever was
-(#287). That guard is unchanged, and it already covered every Run the judge was shown.
+(#287). That guard is unchanged, and it already covered every Run the judge was shown. (The weeks
+the judge reads are guarded too since
+[ADR 0026](./0026-a-graduation-is-refused-when-a-delete-changes-its-weeks.md).)
 
 ## The residue, named
 

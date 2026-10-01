@@ -26,6 +26,7 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.isBeyondAnyonesToday
 import com.example.runningapp.ranOn
 import com.example.runningapp.training.BarStanding
 import com.example.runningapp.training.HistoryBestEffort
@@ -3279,8 +3280,10 @@ class SessionRepository(
             .toSet()
 
     /**
-     * Whether every Run in [shownRunIds] is still in history — asked again, under
+     * Whether every Run in [runIds] is still in history — asked again, under
      * [coachingProvenance], before anything the coach's evidence is written down with (#156).
+     * Mostly the Runs the coach was shown; for a graduation, also the Runs the Stage Training
+     * Record counted, which reached the judge only as a count (#519).
      *
      * **This asks the eligibility question and reads the answer as an existence one, which it is.**
      * Whether a Run may be shown to the coach is stamped on its row when START is pressed, out of
@@ -3302,13 +3305,13 @@ class SessionRepository(
     private suspend fun runsGoneFrom(shownRunIds: Set<Long>): Set<Long> =
         shownRunIds - aiEligibleIdsAmong(shownRunIds.toList())
 
-    private suspend fun theEvidenceStillStands(shownRunIds: Set<Long>, refusing: String): Boolean {
-        val gone = runsGoneFrom(shownRunIds)
+    private suspend fun theEvidenceStillStands(runIds: Set<Long>, refusing: String): Boolean {
+        val gone = runsGoneFrom(runIds)
         if (gone.isEmpty()) return true
         Log.d(
             "AiCoach",
             "Refusing $refusing: it was reasoned from runs deleted while it was being decided. " +
-                "gone=$gone shown=$shownRunIds"
+                "gone=$gone asked=$runIds"
         )
         return false
     }
@@ -3611,7 +3614,12 @@ class SessionRepository(
             stageWorkout = stageWorkout,
             goals = goalProgress,
             stageTraining = stageTraining,
-            stageTrainingRunIds = countedRuns.map { it.id }.toSet(),
+            // Only the Runs the record kept: one dated beyond any clock's today is dropped from the
+            // count, so its delete moves nothing and must refuse nothing.
+            stageTrainingRunIds = countedRuns
+                .filterNot { it.asEvidenceRun(zone).ranOn.isBeyondAnyonesToday(today) }
+                .map { it.id }
+                .toSet(),
         )
     }
 
@@ -5083,8 +5091,9 @@ class SessionRepository(
                 // "you have finished this stage" is the whole of what the coach had to say.
                 //
                 // The third ending of an evaluation, and the one that can least afford to be got
-                // wrong. It rests on exactly the same three Runs the reply and the hold rest on —
-                // the one read of the Stage's last three — and most of a Stage's requirement is
+                // wrong. It rests on the same three Runs the reply and the hold rest on — the one
+                // read of the Stage's last three — and on the weeks counted beside them (below,
+                // #519). Most of a Stage's requirement is
                 // answered by a single Run or a pair of them, so one Run leaving history can take
                 // the whole basis with it. Asked again under [coachingProvenance] for the reason
                 // the other two are: a delete landing during the round trip has already decided
