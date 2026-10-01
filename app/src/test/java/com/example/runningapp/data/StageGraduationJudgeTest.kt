@@ -209,7 +209,7 @@ class StageGraduationJudgeTest {
     @Test
     fun `the record hands over each week's seconds in every zone`() {
         // The cause of #528. A record that said it "measures nothing" scored Chris's five fair
-        // weeks at 0.74-0.83; the same record carrying each week's zone seconds clears the bar.
+        // weeks at 0.74-0.83; carrying each week's zone seconds is what let the Zone 2 half count.
         // Every zone is written, zeroes included: a week whose time sat above Zone 2 has to be
         // seen to, or the judge reads Zone 2 seconds alone and passes a Stage run hard.
         val question = twoCandidates.copy(
