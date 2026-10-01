@@ -19,6 +19,8 @@ the same staged data:
 | Hand request, Chris's real Runs in place of its made-up one | 0.80–0.86 |
 | Shipped request, hand-test question wording | 0.45–0.52 |
 
+- **Not one bad reading.** The #527 reading of 0.79 sat in the middle of the shipped request's
+  spread, so the gap is real and not noise.
 - **Not the model.** `jev-latest` already answers as `jev-1.13.0`. Pinning it changes nothing.
 - **Not the wording.** The hand-test wording scores far *worse* on the shipped state.
 - **The record.** The hand request's record carried each week's Zone 2 seconds and said so. The
@@ -68,6 +70,12 @@ swapped weeks. A refusal costs one more Long Run, which asks again. A wrong grad
 - **Which Runs are counted is unchanged.** Same query, same `isStageEvidence`, with five more
   columns read.
 - **The threshold is unchanged.** Chris ruled out lowering it (#528).
+
+## Not carried
+
+The weekly record sends no strap-gap seconds, though each Run's own state does
+(`secondsWithoutHeartRate`). A week whose strap dropped reads as less zone time, which leans towards a
+no, the safe side. It was left out because every number above was measured without it.
 
 ## The residue
 

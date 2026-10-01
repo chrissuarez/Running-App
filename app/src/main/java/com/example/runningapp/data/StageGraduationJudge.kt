@@ -382,7 +382,8 @@ private fun StageTrainingRecord.asJudgeState(): JsonObject = JsonObject().apply 
         "measures",
         "Runs per calendar week, and the seconds of each week's qualifying runs spent in each " +
             "heart-rate zone, measured second by second against this runner's own zones. It " +
-            "carries no distance and no pace. Use fullWeeksOfTrainingCompleted for how many weeks of training there have been, never " +
+            "carries no distance and no pace. " +
+            "Use fullWeeksOfTrainingCompleted for how many weeks of training there have been, never " +
             "the number of calendar week rows: a first run late in a week starts a new row days " +
             "later, so four rows can be on the list little more than two weeks in."
     )

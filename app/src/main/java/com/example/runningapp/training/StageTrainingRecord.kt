@@ -145,7 +145,7 @@ data class StageTrainingRecord(
 
 /**
  * Build the Stage's training record from the days its qualifying Runs fell on (#289), with no zone
- * time in any week.
+ * time in any week. For tests whose subject is the count; the app always builds from runs.
  */
 fun stageTrainingRecordOf(
     days: Iterable<LocalDate>,
