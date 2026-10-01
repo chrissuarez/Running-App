@@ -120,8 +120,11 @@ intervals, and decides nothing about a Stage.
 The runner finishing a whole Plan: they cleared the last Stage's Requirement and
 there was no Stage after it. Recorded at the moment it is granted — the Plan, the
 day, and the effort in seconds — and never worked out from history afterwards.
+Where the last Stage's Requirement is a judgement, the Graduation Judge grants it
+and no time is recorded: the card names only the day (#517).
 Granted once per Plan: a later Run clearing the bar again moves nothing and says
 nothing, because this records the day the Plan ended and not the runner's best.
+A Plan already finished is not put to the judge again.
 Never taken back by the app, and carried in the archive;
 the one thing that cancels one is the runner moving themselves back off the last
 Stage of that Plan (#235), because a runner standing in Stage 2 has not finished

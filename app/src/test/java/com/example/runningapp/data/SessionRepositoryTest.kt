@@ -3015,6 +3015,7 @@ class SessionRepositoryTest {
             argThat { completedOnEpochDay == LocalDate.parse("2026-08-14").toEpochDay() },
             any(),
             any(),
+            any(),
         )
     }
 
@@ -3047,6 +3048,7 @@ class SessionRepositoryTest {
             argThat { completedOnEpochDay == LocalDate.parse("2026-08-15").toEpochDay() },
             any(),
             any(),
+            any(),
         )
     }
 
@@ -3076,6 +3078,7 @@ class SessionRepositoryTest {
             ),
             "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete. " +
                 "That's the whole plan: 5K to Sub-25 Progressive Plan, done.",
+            DebriefAuthor.APP,
             CoachWriteScope("5k_sub_25", "sub_25_peak")
         )
         // The Prescription stands, and the debrief slot is written by the completion itself rather
@@ -3111,7 +3114,7 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
 
-        verify(mockSettingsRepo, never()).completePlan(any(), any(), any())
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
@@ -3144,6 +3147,7 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo).completePlan(
             eq(PlanCompletion("5k_sub_25", LocalDate.parse("2026-08-14").toEpochDay(), 1_463)),
             any(),
+            any(),
             any()
         )
     }
@@ -3162,7 +3166,7 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
 
-        verify(mockSettingsRepo, never()).completePlan(any(), any(), any())
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any(), any())
     }
 
     @Test
@@ -4847,6 +4851,7 @@ class SessionRepositoryTest {
                 "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete. " +
                     "That's the whole plan: 5K to Sub-25 Progressive Plan, done."
             ),
+            eq(DebriefAuthor.APP),
             eq(CoachWriteScope("5k_sub_25", "sub_25_peak"))
         )
     }
@@ -5354,6 +5359,122 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("desk_test_stage", RunType.LONG)
 
         verify(mockCoach).evaluateProgress(any(), eq(StageAdvance.PLAN_FINISHED))
+    }
+
+    @Test
+    fun `a judged last Stage records the Plan as finished, with the coach's words and no time`() = runTest {
+        // #517. The judge says the last Stage is met, so the plan is finished — and that has to be
+        // written down, not only said. Recorded as one write with the coach's congratulation, on the
+        // day of the Run, and with no time: nothing was timed, so there is no time to keep.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = FakeGraduationJudge.granting(),
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(
+                UserSettings(
+                    activePlanId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                    activeStageId = "desk_test_stage",
+                )
+            )
+        )
+        val run = aTreadmillRun(id = 1, seconds = 1_500).copy(
+            isRunWalkMode = true,
+            startTime = LocalDate.parse("2026-09-30").atTime(12, 0).atZone(ZoneId.systemDefault())
+                .toInstant().toEpochMilli(),
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(run))
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any(), any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                coachMessage = "You have finished the plan."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("desk_test_stage", RunType.LONG, finalizedRun = run)
+
+        verify(mockSettingsRepo).completePlan(
+            eq(
+                PlanCompletion(
+                    planId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                    completedOnEpochDay = LocalDate.parse("2026-09-30").toEpochDay(),
+                    seconds = null,
+                )
+            ),
+            eq("You have finished the plan."),
+            eq(DebriefAuthor.COACH),
+            any(),
+        )
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `a plan already finished on a judgement is not judged or congratulated again`() = runTest {
+        // #517's visible symptom: every later Long Run judged and congratulated as finishing the
+        // plan again. Once is the rule (#294), so the judge is not asked and the coach is told
+        // nothing moved.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val judge = FakeGraduationJudge.granting()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+            graduationJudge = judge,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(
+                UserSettings(
+                    activePlanId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                    activeStageId = "desk_test_stage",
+                    planCompletion = PlanCompletion(
+                        planId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                        completedOnEpochDay = LocalDate.parse("2026-09-30").toEpochDay(),
+                        seconds = null,
+                    ),
+                )
+            )
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any(), any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                coachMessage = "Good work."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("desk_test_stage", RunType.LONG)
+
+        assertNull(judge.lastQuestion)
+        verify(mockCoach).evaluateProgress(any(), eq(StageAdvance.NONE))
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any(), any())
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+        verify(mockPrescriptions).prescribe(any(), any(), eq("Good work."), any(), any())
     }
 
     @Test

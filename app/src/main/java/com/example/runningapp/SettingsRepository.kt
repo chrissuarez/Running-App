@@ -72,8 +72,8 @@ data class UserSettings(
     // stamped with one it was never shown (#234), and every disagreement after that is the same bug
     // wearing a different reader's clothes. The pair is [activePlanAndStage].
     val activeStageId: String? = null,
-    // The Plan the runner has finished, if they have finished one (#294). Recorded by the
-    // graduation rule at the moment it grants on a Plan's last Stage, and never worked out from
+    // The Plan the runner has finished, if they have finished one (#294). Recorded at the moment a
+    // Plan's last Stage is granted — by the rule or by the judge (#517) — and never worked out from
     // history afterwards — see [PlanCompletion]. Null is "no Plan has been finished", which is the
     // truth about every runner until one is.
     val planCompletion: PlanCompletion? = null,
@@ -208,7 +208,8 @@ internal object PreferencesKeys {
     val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
     val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
     // The Plan the runner has finished, and what finished it (#294). Three keys because a
-    // completion is three facts, written and read as one — see [planCompletionOf].
+    // completion is three facts, written and read as one — see [planCompletionOf]. The time is
+    // absent where a judgement finished the Plan (#517).
     val PLAN_COMPLETE_PLAN_ID = stringPreferencesKey("plan_complete_plan_id")
     val PLAN_COMPLETE_DAY = longPreferencesKey("plan_complete_day")
     val PLAN_COMPLETE_SECONDS = intPreferencesKey("plan_complete_seconds")
@@ -435,14 +436,16 @@ internal fun MutablePreferences.clearCoachWork() {
  * The Plan the runner has finished, out of the three keys that hold it (#294), or null where no Plan
  * has been finished.
  *
- * All three or none. They are only ever written together, in one edit, so a partial trio cannot
- * arise from this app — and reading one anyway would be inventing the missing part of a fact that
- * exists precisely once and cannot be taken back. A completion missing its day is not a completion.
+ * The Plan and the day, or none. They are only ever written together, in one edit, so half of them
+ * cannot arise from this app — and reading one anyway would be inventing the missing part of a fact
+ * that exists precisely once and cannot be taken back. A completion missing its day is not a
+ * completion. The time is the one key that may be absent: a Plan finished on a judgement kept none
+ * (#517).
  */
 internal fun planCompletionOf(preferences: Preferences): PlanCompletion? {
     val planId = preferences[PreferencesKeys.PLAN_COMPLETE_PLAN_ID] ?: return null
     val day = preferences[PreferencesKeys.PLAN_COMPLETE_DAY] ?: return null
-    val seconds = preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS] ?: return null
+    val seconds = preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS]
     return PlanCompletion(planId = planId, completedOnEpochDay = day, seconds = seconds)
 }
 
@@ -464,7 +467,9 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
     // [planCompletionOf] gives half a trio of keys. It cannot be built in Kotlin, but it can
     // arrive: an archive is JSON read by Gson, which fills a field a truncated document never
     // mentioned — with null whatever a reference type says, and with a silent 0 for a Long or an
-    // Int, which is why the day and the time are checked and not only the Plan. A completion stored
+    // Int, which is why the day and the time are checked and not only the Plan. An absent time is
+    // allowed — a Plan finished on a judgement kept none (#517) — but a time of 0 or less never
+    // came from a Run. A completion stored
     // out of those defaults would put the runner's finest afternoon on 1 January 1970 in 0:00, and
     // a day far enough out of range would make the card throw rather than read wrong.
     //
@@ -475,7 +480,7 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
         completion.planId == null ||
         completion.planId.isBlank() ||
         completion.completedOnEpochDay !in PLAN_COMPLETION_DAYS ||
-        completion.seconds <= 0
+        (completion.seconds != null && completion.seconds <= 0)
     ) {
         remove(PreferencesKeys.PLAN_COMPLETE_PLAN_ID)
         remove(PreferencesKeys.PLAN_COMPLETE_DAY)
@@ -484,7 +489,11 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
     }
     this[PreferencesKeys.PLAN_COMPLETE_PLAN_ID] = completion.planId
     this[PreferencesKeys.PLAN_COMPLETE_DAY] = completion.completedOnEpochDay
-    this[PreferencesKeys.PLAN_COMPLETE_SECONDS] = completion.seconds
+    if (completion.seconds != null) {
+        this[PreferencesKeys.PLAN_COMPLETE_SECONDS] = completion.seconds
+    } else {
+        remove(PreferencesKeys.PLAN_COMPLETE_SECONDS)
+    }
 }
 
 /**
@@ -565,13 +574,18 @@ internal fun activePlanAndStage(planId: String?, stageId: String?): Pair<String?
  * Pure and separate from the write around it, for the reason [coachWriteAllowed] is: "once" is the
  * rule this holds, and a rule is worth reading and testing without a DataStore behind it.
  *
- * The congratulation is stamped [DebriefAuthor.APP] — always, with no author to pass in — because
- * it is written from the Plan's own numbers, offline and with no Gemini key (#296).
+ * [author] is whoever the words are (#296): the app's own, where the last Stage's requirement was
+ * written in numbers and answered offline with no Gemini key; the coach's, where the requirement was
+ * a judgement and the congratulation came back from Gemini (#517).
  */
-internal fun MutablePreferences.completePlanOnce(completion: PlanCompletion, message: String) {
+internal fun MutablePreferences.completePlanOnce(
+    completion: PlanCompletion,
+    message: String,
+    author: DebriefAuthor = DebriefAuthor.APP,
+) {
     if (planCompletionOf(this)?.planId == completion.planId) return
     writePlanCompletion(completion)
-    writeStandingDebrief(message, DebriefAuthor.APP)
+    writeStandingDebrief(message, author)
 }
 
 /**
@@ -1095,10 +1109,18 @@ class SettingsRepository(private val context: Context) {
      * Goes through [editCoachWrite] like every other write of the graduation rule's, for the same
      * reason [graduateStage] does: a runner who changed plans while this was
      * being decided must not have the plan they left declared finished.
+     *
+     * [author] is whoever the words are, as on [graduateStage]: the app's, for a requirement in
+     * numbers; the coach's, for one the Graduation Judge answered (#517).
      */
-    suspend fun completePlan(completion: PlanCompletion, message: String, scope: CoachWriteScope) {
+    suspend fun completePlan(
+        completion: PlanCompletion,
+        message: String,
+        author: DebriefAuthor,
+        scope: CoachWriteScope,
+    ) {
         context.dataStore.editCoachWrite(scope) { preferences ->
-            preferences.completePlanOnce(completion, message)
+            preferences.completePlanOnce(completion, message, author)
         }
     }
 

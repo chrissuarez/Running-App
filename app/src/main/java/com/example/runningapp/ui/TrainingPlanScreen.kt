@@ -201,13 +201,12 @@ fun TrainingPlanScreen(
                         val isActiveStage = stage.id == selectedStageId
                         // The whole sentence, built here from the stored completion and this
                         // Stage's own Requirement — null on every other Stage and on a plan nobody
-                        // has finished. Null where a completed Stage somehow carries no Requirement
-                        // in numbers, which cannot arise from the rule that writes one: a
-                        // completion is granted by that Requirement being answered.
+                        // has finished. A Stage whose Requirement is a judgement has no Requirement
+                        // in numbers, and its line names only the day (#517).
                         val completedLine = if (completion == null || stage.id != completedStageId) {
                             null
                         } else {
-                            stage.bestEffortRequirement?.let { planCompleteLine(completion, it) }
+                            planCompleteLine(completion, stage.bestEffortRequirement)
                         }
                         // Everything the card says ABOUT the bar — the bar already beaten (#293),
                         // the training counted towards it (#445), the gap still to it (#446) —

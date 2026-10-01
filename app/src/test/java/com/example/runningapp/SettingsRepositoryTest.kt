@@ -350,6 +350,22 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `a Plan finished on a judgement keeps the coach's words and stores no time`() {
+        // #517. The judge granted the last Stage and the coach wrote the congratulation, so the
+        // card names the coach. Nothing was timed, so no time is stored — and the completion still
+        // reads back whole.
+        val preferences = mutablePreferencesOf()
+        val completion = PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = null)
+
+        preferences.completePlanOnce(completion, "You have finished the plan.", DebriefAuthor.COACH)
+
+        assertEquals(completion, planCompletionOf(preferences))
+        assertNull(preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS])
+        assertEquals("You have finished the plan.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
     fun `a Plan already finished is not congratulated again`() {
         val preferences = mutablePreferencesOf()
         val completion = PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632)

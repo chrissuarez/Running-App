@@ -41,4 +41,19 @@ class PlanCompletionTest {
         )
         assertEquals("Completed 14 August 2026 — you ran 1 km in 10:00.", line)
     }
+
+    @Test
+    fun `a plan finished on a judgement names only the day`() {
+        // #517. The judge granted the last Stage, so nothing was timed and no time is stored — the
+        // card says the day and claims no run it cannot name.
+        val line = planCompleteLine(
+            PlanCompletion(
+                planId = "desk_test_plan",
+                completedOnEpochDay = LocalDate.parse("2026-09-30").toEpochDay(),
+                seconds = null,
+            ),
+            requirement = null,
+        )
+        assertEquals("Completed 30 September 2026.", line)
+    }
 }
