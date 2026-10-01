@@ -5698,6 +5698,85 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a week's Run deleted while the judge was thinking does not finish the Plan`() = runTest {
+        // The same refusal on the plan's last Stage (#519, #517), where the write is a completion
+        // rather than a move — and just as impossible to take back.
+        val mockCoach: AiCoachClient = aCoachThatCanBeAsked()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mock(),
+            aiCoachClient = mockCoach,
+            graduationJudge = FakeGraduationJudge.granting(),
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(
+                UserSettings(
+                    activePlanId = TrainingPlanProvider.DESK_TEST_PLAN_ID,
+                    activeStageId = "desk_test_stage",
+                )
+            )
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+            )
+        )
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-09-01", id = 9), aStageEvidenceDay("2026-09-29", id = 1))
+            )
+        }
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        mockCoach.stub {
+            onBlocking { evaluateProgress(any(), any()) }.doSuspendableAnswer {
+                mockDao.stub {
+                    onBlocking { getAiEligibleIdsIn(any()) }
+                        .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 9L } }
+                }
+                AiCoachResponse(
+                    nextRunDurationSeconds = 360,
+                    nextWalkDurationSeconds = 60,
+                    nextRepeats = 5,
+                    coachMessage = "You have finished the plan."
+                )
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("desk_test_stage", RunType.LONG)
+
+        verify(mockCoach).evaluateProgress(any(), eq(StageAdvance.PLAN_FINISHED))
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `a Run the record does not count is not named among the weeks a graduation rests on`() = runTest {
+        // A Run dated beyond any clock's today is dropped from the count (#289), so deleting it
+        // moves nothing and must not refuse a graduation (#519).
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-09-29", id = 1), aStageEvidenceDay("2027-09-29", id = 9))
+            )
+        }
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+
+        val context = repository.getAiTrainingContext(
+            "base_builder",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.parse("2026-10-01"),
+        )
+
+        assertEquals(1, context.stageTraining.qualifyingRuns)
+        assertEquals(setOf(1L), context.stageTrainingRunIds)
+    }
+
+    @Test
     fun `a week's Run deleted mid-evaluation does not refuse a Prescription`() = runTest {
         // The other half of #519: the record is guarded for the graduation alone. A Prescription
         // stands on the three Runs it was shown (#156), and a twenty-Run Stage must not lose a
