@@ -393,5 +393,7 @@ internal fun parseGraduationAnswer(json: String): Boolean? {
         Log.w("AiCoach", "TypeSafe's answer to $REQUIREMENT_QUESTION_ID is not a probability")
         return null
     }
+    // The score itself, so a phone pass can say how far from the threshold a no landed (#527).
+    Log.d("AiCoach", "TypeSafe scored $REQUIREMENT_QUESTION_ID at $noul (graduates at $GRADUATION_NOUL_THRESHOLD)")
     return noul >= GRADUATION_NOUL_THRESHOLD
 }
