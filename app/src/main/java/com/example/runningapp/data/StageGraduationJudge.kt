@@ -167,7 +167,11 @@ class TypeSafeGraduationJudge(
         // No evidence is a no, and it is the app's own no: there is nothing to send, so nothing is
         // asked. A request with an empty `runs` would be asking the judge to reason about an
         // absence, which is the one thing a model reliably fills in for itself.
-        if (question.candidates.isEmpty()) return false
+        if (question.candidates.isEmpty()) {
+            // Said out loud, so a no with no score line is not read as a score that went missing (#527).
+            Log.d("AiCoach", "Not asking TypeSafe: no candidate Runs, so the requirement is not met")
+            return false
+        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -393,7 +397,7 @@ internal fun parseGraduationAnswer(json: String): Boolean? {
         Log.w("AiCoach", "TypeSafe's answer to $REQUIREMENT_QUESTION_ID is not a probability")
         return null
     }
-    // The score itself, so a phone pass can say how far from the threshold a no landed (#527).
-    Log.d("AiCoach", "TypeSafe scored $REQUIREMENT_QUESTION_ID at $noul (graduates at $GRADUATION_NOUL_THRESHOLD)")
+    // The Noul itself, so a phone pass can say how far from the threshold a no landed (#527).
+    Log.d("AiCoach", "TypeSafe's noul for $REQUIREMENT_QUESTION_ID is $noul (met at $GRADUATION_NOUL_THRESHOLD)")
     return noul >= GRADUATION_NOUL_THRESHOLD
 }
