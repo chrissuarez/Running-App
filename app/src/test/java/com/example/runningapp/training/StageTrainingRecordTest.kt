@@ -49,6 +49,30 @@ class StageTrainingRecordTest {
     }
 
     @Test
+    fun `each week carries the seconds its runs spent in each zone, added up`() {
+        // "4 weeks of consistent Zone 2 training" asks what kind of training as well as how much,
+        // and a week that only counts its Runs cannot say (#528). The seconds are the Runs' own
+        // stored measurement, added up a week at a time; an empty week measured nothing.
+        val record = stageTrainingRecordOf(
+            runs = listOf(
+                StageEvidenceRun(day("2026-08-17"), mapOf(1 to 100L, 2 to 900L, 3 to 50L)),
+                StageEvidenceRun(day("2026-08-20"), mapOf(1 to 200L, 2 to 600L, 4 to 30L)),
+                StageEvidenceRun(day("2026-09-01"), mapOf(2 to 1_200L)),
+            ),
+            through = day("2026-09-01"),
+        )
+
+        assertEquals(
+            listOf(
+                StageWeek(day("2026-08-17"), 2, mapOf(1 to 300L, 2 to 1_500L, 3 to 50L, 4 to 30L)),
+                StageWeek(day("2026-08-24"), 0),
+                StageWeek(day("2026-08-31"), 1, mapOf(2 to 1_200L)),
+            ),
+            record.weeks
+        )
+    }
+
+    @Test
     fun `a week nobody ran in is kept as a zero, because a gap is what consistent asks about`() {
         val record = stageTrainingRecordOf(
             days = listOf(day("2026-08-03"), day("2026-08-19")),

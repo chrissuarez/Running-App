@@ -27,7 +27,8 @@ class StageEvidenceDaysQueryTest {
 
     /** The statement as `SessionDao.getAiEvidenceRunDaysOfStage` declares it. */
     private val evidenceDays = """
-        SELECT id, startTime FROM sessions
+        SELECT id, startTime, ranAtUtcOffsetSeconds,
+               zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds FROM sessions
         WHERE endTime > 0
           AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
@@ -51,7 +52,12 @@ class StageEvidenceDaysQueryTest {
                 ranUnderStageId TEXT,
                 isRunWalkMode INTEGER NOT NULL DEFAULT 0,
                 isWalk INTEGER NOT NULL DEFAULT 0,
-                ranAtUtcOffsetSeconds INTEGER
+                ranAtUtcOffsetSeconds INTEGER,
+                zone1Seconds INTEGER NOT NULL DEFAULT 0,
+                zone2Seconds INTEGER NOT NULL DEFAULT 0,
+                zone3Seconds INTEGER NOT NULL DEFAULT 0,
+                zone4Seconds INTEGER NOT NULL DEFAULT 0,
+                zone5Seconds INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -95,6 +101,26 @@ class StageEvidenceDaysQueryTest {
         givenRun(id = 6, startTime = 6_000, includeInAiTraining = false)
 
         assertEquals(listOf(1_000L), db.query(evidenceDays))
+    }
+
+    @Test
+    fun `each run comes back with its own seconds in every zone`() {
+        // What the record adds up week by week, so a requirement written as a zone is judged on
+        // where the weeks' time was spent and not only on how many Runs they held (#528).
+        givenRun(id = 1, startTime = 1_000)
+        db.exec(
+            "UPDATE sessions SET zone1Seconds = 11, zone2Seconds = 22, zone3Seconds = 33, " +
+                "zone4Seconds = 44, zone5Seconds = 55 WHERE id = 1"
+        )
+
+        val zones = db.createStatement().use { statement ->
+            statement.executeQuery(evidenceDays).use {
+                it.next()
+                (4..8).map { column -> it.getLong(column) }
+            }
+        }
+
+        assertEquals(listOf(11L, 22L, 33L, 44L, 55L), zones)
     }
 
     private fun givenRun(

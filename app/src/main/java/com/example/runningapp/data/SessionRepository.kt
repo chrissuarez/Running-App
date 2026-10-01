@@ -43,6 +43,7 @@ import com.example.runningapp.training.testIsDue
 import com.example.runningapp.training.wasRunFarEnough
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.StageTrainingRecord
+import com.example.runningapp.training.StageEvidenceRun
 import com.example.runningapp.training.stageTrainingRecordOf
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.RecordType
@@ -393,6 +394,21 @@ data class AiGoal(
  */
 internal val RunnerSession.isStageEvidence: Boolean
     get() = isRunWalkMode && !isWalk && includeInAiTraining
+
+/**
+ * A qualifying Run as the Stage's training record reads it: the day the runner would say they ran,
+ * and the seconds the row stored for each zone (#528).
+ */
+private fun StageEvidenceDayProjection.asEvidenceRun(zone: ZoneId) = StageEvidenceRun(
+    ranOn = ranOn(startTime, ranAtUtcOffsetSeconds, zone),
+    secondsByZone = mapOf(
+        1 to zone1Seconds,
+        2 to zone2Seconds,
+        3 to zone3Seconds,
+        4 to zone4Seconds,
+        5 to zone5Seconds,
+    ),
+)
 
 data class AiTrainingContext(
     val currentStageTitle: String,
@@ -1530,8 +1546,7 @@ class SessionRepository(
     ): StageTrainingRecord {
         if (stageId == null) return StageTrainingRecord.NONE
         return stageTrainingRecordOf(
-            days = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
-                .map { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, zone) },
+            runs = sessionDao.getAiEvidenceRunDaysOfStage(stageId).map { it.asEvidenceRun(zone) },
             through = today,
         )
     }
@@ -3539,9 +3554,9 @@ class SessionRepository(
         // [isStageEvidence] fails it after the sheet too.
         val notEvidenceAfterAll = finalizedRun?.takeIf { !it.isStageEvidence }?.id
         val stageTraining = stageTrainingRecordOf(
-            days = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
+            runs = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
                 .filterNot { it.id == notEvidenceAfterAll }
-                .map { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, zone) },
+                .map { it.asEvidenceRun(zone) },
             through = today,
         )
 

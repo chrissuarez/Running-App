@@ -82,6 +82,10 @@ Run into a Walk and never back.
 - **It counts and measures nothing.** It carries a date per Run and nothing else — no heart rate, no
   zone, no distance, no duration — so it can never answer a requirement written as a distance in a
   time, which is the coach's to judge in any case only where ADR 0016 has not already taken it away.
+  Lifted for the **judge's** copy by
+  [ADR 0025](./0025-the-judges-record-carries-where-each-weeks-heart-rate-was.md): it now carries
+  each week's seconds in every zone, because a record that "measures nothing" could not show the
+  Zone 2 half of the requirement. The coach's copy still measures nothing.
 - **A requirement has two halves, and the record answers only one.** "4 weeks of consistent Zone 2
   training" asks how much training there was *and* what kind it was. The record answers how much;
   what kind is answered only from the three recent Runs, which are the only rows in the prompt

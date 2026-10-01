@@ -203,7 +203,48 @@ class StageGraduationJudgeTest {
 
         assertEquals(2, record.get("fullWeeksOfTrainingCompleted").asInt)
         assertEquals(4, record.getAsJsonObject("calendarWeeks").size())
-        assertTrue(record.get("measures").asString.contains("counts runs and measures none of them"))
+        assertTrue(record.get("measures").asString.contains("never the number of calendar week rows"))
+    }
+
+    @Test
+    fun `the record hands over each week's seconds in every zone`() {
+        // The cause of #528. A record that said it "measures nothing" scored Chris's five fair
+        // weeks at 0.74-0.83; the same record carrying each week's zone seconds clears the bar.
+        // Every zone is written, zeroes included: a week whose time sat above Zone 2 has to be
+        // seen to, or the judge reads Zone 2 seconds alone and passes a Stage run hard.
+        val question = twoCandidates.copy(
+            stageTraining = threeWeeksOfTraining.copy(
+                weeks = listOf(
+                    StageWeek(LocalDate.parse("2026-08-10"), 2, mapOf(1 to 300L, 2 to 1_500L, 3 to 900L)),
+                    StageWeek(LocalDate.parse("2026-08-17"), 0),
+                )
+            )
+        )
+
+        val record = requestOf(question).getAsJsonObject("state")
+            .getAsJsonObject("stageTrainingRecord")
+        val weeks = record.getAsJsonObject("calendarWeeksSecondsInZone")
+
+        assertEquals(setOf("2026-08-10", "2026-08-17"), weeks.keySet())
+        val first = weeks.getAsJsonObject("2026-08-10")
+        assertEquals(setOf("1", "2", "3", "4", "5"), first.keySet())
+        assertEquals(1_500L, first.get("2").asLong)
+        assertEquals(900L, first.get("3").asLong)
+        assertEquals(0L, first.get("5").asLong)
+        assertEquals(0L, weeks.getAsJsonObject("2026-08-17").get("2").asLong)
+        assertFalse(record.get("measures").asString.contains("measures none of them"))
+    }
+
+    @Test
+    fun `a zone requirement is judged on the kind of training as well as the amount`() {
+        // Without this sentence a record run mostly in Zone 4 scored as high as one run in Zone 2:
+        // the judge counted the weeks and read past the zones (#528).
+        val instructions = requestOf(twoCandidates.copy(stageTraining = threeWeeksOfTraining))
+            .getAsJsonObject("questions")
+            .getAsJsonObject("requirement_met")
+            .get("instructions").asString
+
+        assertTrue(instructions.contains("weigh time above that zone against it"))
     }
 
     // --- What comes back ----------------------------------------------------------------------
