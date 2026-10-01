@@ -469,8 +469,8 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
     // only the Plan. Stored, that default would put the runner's finest afternoon on 1 January 1970,
     // and a day far enough out of range would make the card throw rather than read wrong.
     //
-    // The time may be absent: a Plan finished on a judgement kept none (#517), so a missing time
-    // reads as that, and the card names only the day. A time of 0 or less never came from a Run.
+    // The time may be absent, but only where the Plan's last Stage is a judgement (#517) — see
+    // [completionTimeFitsItsPlan]. A time of 0 or less never came from a Run.
     //
     // Refused here rather than at the read, so one malformed field costs a restore a fact it never
     // really had instead of costing it the whole archive.
@@ -479,7 +479,8 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
         completion.planId == null ||
         completion.planId.isBlank() ||
         completion.completedOnEpochDay !in PLAN_COMPLETION_DAYS ||
-        (completion.seconds != null && completion.seconds <= 0)
+        (completion.seconds != null && completion.seconds <= 0) ||
+        !completionTimeFitsItsPlan(completion.planId, completion.seconds)
     ) {
         remove(PreferencesKeys.PLAN_COMPLETE_PLAN_ID)
         remove(PreferencesKeys.PLAN_COMPLETE_DAY)
@@ -493,6 +494,23 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
     } else {
         remove(PreferencesKeys.PLAN_COMPLETE_SECONDS)
     }
+}
+
+/**
+ * Whether a completion's time is the kind its Plan's last Stage can grant (#517).
+ *
+ * A last Stage stated in numbers is granted on a timed effort, so its completion always has a time;
+ * a last Stage that is a judgement timed nothing, so its completion has none. A completion that
+ * disagrees did not come from this app — most likely an archive with a field missing, which Gson
+ * reads as null — and believing it would mark a timed Plan finished on no time at all.
+ *
+ * A Plan this build does not hold keeps the rule it had before #517: a time is required, because
+ * nothing here can say its last Stage was ever a judgement.
+ */
+private fun completionTimeFitsItsPlan(planId: String, seconds: Int?): Boolean {
+    val lastStage = TrainingPlanProvider.getPlanById(planId)?.stages?.lastOrNull()
+        ?: return seconds != null
+    return (lastStage.bestEffortRequirement != null) == (seconds != null)
 }
 
 /**
