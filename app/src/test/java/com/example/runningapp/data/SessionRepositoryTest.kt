@@ -1104,7 +1104,33 @@ class SessionRepositoryTest {
         assertEquals(2, record.qualifyingRuns)
     }
 
-    /** One qualifying Run, on [isoDay] at noon UTC — the day is all the record reads. */
+    @Test
+    fun `the record carries each week's seconds in every zone, read off the stored Runs`() = runTest {
+        // A requirement written as a zone asks what kind of training the weeks held, and the count
+        // alone could not say (#528). The seconds are the rows' own, added up a week at a time.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(
+                    aStageEvidenceDay("2026-08-25", id = 43).copy(zone2Seconds = 900, zone3Seconds = 100),
+                    aStageEvidenceDay("2026-08-27", id = 44).copy(zone1Seconds = 60, zone2Seconds = 600),
+                )
+            )
+        }
+
+        val record = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneId.of("UTC"),
+            today = LocalDate.parse("2026-08-30"),
+        ).stageTraining
+
+        assertEquals(
+            mapOf(1 to 60L, 2 to 1_500L, 3 to 100L, 4 to 0L, 5 to 0L),
+            record.weeks.single().secondsByZone
+        )
+    }
+
+    /** One qualifying Run, on [isoDay] at noon UTC, with no zone time unless a test gives it some. */
     private fun aStageEvidenceDay(isoDay: String, id: Long = 0) = StageEvidenceDayProjection(
         id = id,
         startTime = LocalDate.parse(isoDay).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli(),

@@ -85,6 +85,10 @@ in the number of Monday-starting rows: a Sunday start puts four rows on the list
 a fortnight in, and nothing in the app takes a graduation back. The app counts; whether
 the count is *consistent* stays the Graduation Judge's
 ([ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md)).
+The judge's copy also carries each week's seconds in every heart-rate zone, so a
+requirement written as a zone is judged on where the weeks' time was spent; the
+coach's copy carries the count only
+([ADR 0025](docs/adr/0025-the-judges-record-carries-where-each-weeks-heart-rate-was.md)).
 _Avoid_: training history (the whole record book, across every Stage), streak,
 weekly volume (the bars on the Progress screen, which count every Run and are
 never evidence)

@@ -149,7 +149,9 @@ private const val REQUIREMENT_QUESTION_ID = "requirement_met"
  * could never graduate. Measured on Chris's own data against `jev-1.13.0`: the per-Run question
  * scored 0.51, the per-Run question with each week's Zone 2 seconds added scored 0.43, and this one
  * cohort question scored 0.87 — the only one of the three over [GRADUATION_NOUL_THRESHOLD]. See
- * ADR 0024.
+ * ADR 0024. That 0.87 was asked over a record carrying each week's Zone 2 seconds, which the app
+ * then did not send, and on the phone it scored 0.79 (#527) — so the record now carries each
+ * week's seconds in every zone, and the question weighs time above a named zone. See ADR 0025.
  *
  * What the cohort question does *not* give back is the model's freedom to pick Runs. It is asked
  * one closed question about a set the app chose, and answers a probability. Which Runs may be in
@@ -217,9 +219,9 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
     // such key is a path the model is sent to look down and finds nothing at.
     val trainingRecordSentence = when {
         question.stageTraining.isEmpty -> ""
-        else -> " Read them together with `stageTrainingRecord`, which is the app's own count of " +
-            "how much training this stage has held and is how a requirement written in weeks is " +
-            "answered."
+        else -> " Read them together with `stageTrainingRecord`, which is the app's own record of " +
+            "how much training this stage has held, week by week, and of where each week's heart " +
+            "rate was."
     }
     val runs = JsonObject().apply {
         question.candidates.forEach { candidate ->
@@ -228,9 +230,9 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
     }
     val state = JsonObject().apply {
         addProperty("requirement", question.requirement)
-        // The Stage's own count of its qualifying Runs, so a requirement written in weeks is not
-        // judged through a three-Run keyhole (#289). A count and never a measurement: it says how
-        // many Runs fell in each week and nothing about how far or how fast any of them went.
+        // The Stage's own record of its qualifying Runs, so a requirement written in weeks is not
+        // judged through a three-Run keyhole (#289): how many Runs fell in each week, and where
+        // each week's heart rate was (#528). Nothing about how far or how fast any of them went.
         if (!question.stageTraining.isEmpty) {
             add("stageTrainingRecord", question.stageTraining.asJudgeState())
         }
@@ -250,7 +252,12 @@ internal fun buildGraduationRequest(question: GraduationQuestion): String {
                         " Judge the training as a whole, not any single run: a requirement about " +
                         "a span of weeks is met by the record of those weeks and not by one run, " +
                         "and a requirement about one performance is met the moment one run shows " +
-                        "it."
+                        "it." +
+                        // Without it the judge counted the weeks and read past the zones: Chris's
+                        // weeks swapped into Zone 4 scored about as high as the real ones (#528).
+                        " Where the requirement names a heart-rate zone, it is about the kind of " +
+                        "training as well as the amount: read where each week's seconds were " +
+                        "spent, and weigh time above that zone against it."
                 )
                 add(
                     "criteria",
@@ -325,15 +332,20 @@ private fun GraduationCandidate.asJudgeState(): JsonObject = JsonObject().apply 
 }
 
 /**
- * The Stage's training record as state, with the two things it cannot say said as fields rather
- * than as rules (#289).
+ * The Stage's training record as state, with what it cannot say said as fields rather than as
+ * rules (#289).
  *
  * Both were `CRITICAL RULE` lines in the evaluation prompt, and both existed because prose invites
  * a reading it never meant. `fullWeeksOfTrainingCompleted` is the answer to "how many weeks", so
  * there is no longer a row-counting mistake to forbid — the rows are still here, named as calendar
  * weeks, but the number a weeks-based requirement wants is given outright. And `measures` says what
- * the record is: a list of dates, carrying no heart rate, no zone, no distance and no duration, so
- * a Run above Zone 2 and a Run of two minutes are each one tick.
+ * the record is.
+ *
+ * `calendarWeeksSecondsInZone` is #528. The record used to say it measured nothing, and the judge
+ * believed it: Chris's five fair weeks of Stage 1 scored 0.74-0.83 against a 0.8 bar, and a weekly
+ * "measures nothing" beside "4 weeks of consistent Zone 2" is a record that cannot show the half of
+ * the requirement it names. Every zone is written, zeroes included, so time above Zone 2 is as
+ * plain as time in it — see ADR 0025.
  */
 private fun StageTrainingRecord.asJudgeState(): JsonObject = JsonObject().apply {
     addProperty("qualifyingRuns", qualifyingRuns)
@@ -344,6 +356,21 @@ private fun StageTrainingRecord.asJudgeState(): JsonObject = JsonObject().apply 
         "calendarWeeks",
         JsonObject().apply { weeks.forEach { addProperty(it.startingOn.toString(), it.qualifyingRuns) } }
     )
+    add(
+        "calendarWeeksSecondsInZone",
+        JsonObject().apply {
+            weeks.forEach { week ->
+                add(
+                    week.startingOn.toString(),
+                    JsonObject().apply {
+                        (1..5).forEach { zone ->
+                            addProperty(zone.toString(), week.secondsByZone[zone] ?: 0L)
+                        }
+                    }
+                )
+            }
+        }
+    )
     addProperty("calendarWeeksAreATail", weeksAreATail)
     addProperty(
         "whatAQualifyingRunIs",
@@ -353,10 +380,9 @@ private fun StageTrainingRecord.asJudgeState(): JsonObject = JsonObject().apply 
     )
     addProperty(
         "measures",
-        "Nothing. This record counts runs and measures none of them: it carries no heart rate, no " +
-            "zone, no distance and no duration. Never assume a run counted here was run in any " +
-            "particular zone, at any particular effort or over any particular distance. Use " +
-            "fullWeeksOfTrainingCompleted for how many weeks of training there have been, never " +
+        "Runs per calendar week, and the seconds of each week's qualifying runs spent in each " +
+            "heart-rate zone, measured second by second against this runner's own zones. It " +
+            "carries no distance and no pace. Use fullWeeksOfTrainingCompleted for how many weeks of training there have been, never " +
             "the number of calendar week rows: a first run late in a week starts a new row days " +
             "later, so four rows can be on the list little more than two weeks in."
     )

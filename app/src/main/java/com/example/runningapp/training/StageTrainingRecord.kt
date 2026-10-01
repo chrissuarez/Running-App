@@ -30,16 +30,30 @@ private const val WEEKS_SHOWN = 12
 const val STAGE_EVIDENCE_MIN_SECONDS = 120
 
 /**
- * One training week of a Stage: the Monday it began on, and how many of the Stage's qualifying Runs
- * fell in it (#289).
+ * One training week of a Stage: the Monday it began on, how many of the Stage's qualifying Runs
+ * fell in it (#289), and the seconds those Runs spent in each heart-rate zone (#528).
  *
  * A week nobody ran in is a week with zero, kept rather than left out — a gap is exactly what a
  * requirement about *consistent* training is asking about, and a list with the empty weeks removed
  * would draw a fortnight off as two weeks in a row.
+ *
+ * [secondsByZone] is the Runs' own stored measurement, added up: each Run's seconds in zones 1 to 5,
+ * measured second by second against the runner's own zones. A week nobody ran in measured nothing,
+ * and holds no entries.
  */
 data class StageWeek(
     val startingOn: LocalDate,
     val qualifyingRuns: Int,
+    val secondsByZone: Map<Int, Long> = emptyMap(),
+)
+
+/**
+ * One qualifying Run as the training record reads it: the day it fell on, and the seconds it spent
+ * in each heart-rate zone (#528).
+ */
+data class StageEvidenceRun(
+    val ranOn: LocalDate,
+    val secondsByZone: Map<Int, Long> = emptyMap(),
 )
 
 /**
@@ -130,9 +144,18 @@ data class StageTrainingRecord(
 }
 
 /**
- * Build the Stage's training record from the days its qualifying Runs fell on (#289).
+ * Build the Stage's training record from the days its qualifying Runs fell on (#289), with no zone
+ * time in any week.
+ */
+fun stageTrainingRecordOf(
+    days: Iterable<LocalDate>,
+    through: LocalDate,
+): StageTrainingRecord = stageTrainingRecordOf(runs = days.map { StageEvidenceRun(it) }, through = through)
+
+/**
+ * Build the Stage's training record from its qualifying Runs (#289, #528).
  *
- * [days] is one entry per qualifying Run — the Stage's own structured, non-Walk, shareable Runs, as
+ * [runs] is one entry per qualifying Run — the Stage's own structured, non-Walk, shareable Runs, as
  * chosen by `getAiEvidenceRunDaysOfStage`. Which Runs qualify is decided in the query rather than
  * here, so the count and the filter that picks a graduation's candidates cannot drift apart.
  *
@@ -140,19 +163,30 @@ data class StageTrainingRecord(
  * drops one: a phone whose clock has slipped by months must not add empty months to the record and
  * report a Stage as mostly untrained.
  */
+@JvmName("stageTrainingRecordOfRuns")
 fun stageTrainingRecordOf(
-    days: Iterable<LocalDate>,
+    runs: Iterable<StageEvidenceRun>,
     through: LocalDate,
 ): StageTrainingRecord {
-    val counted = days.filterNot { it.isBeyondAnyonesToday(through) }
-    val firstRunOn = counted.minOrNull() ?: return StageTrainingRecord.NONE
-    val counts = counted.groupingBy { it.mondayOfWeek() }.eachCount()
+    val counted = runs.filterNot { it.ranOn.isBeyondAnyonesToday(through) }
+    val firstRunOn = counted.minOfOrNull { it.ranOn } ?: return StageTrainingRecord.NONE
+    val byWeek = counted.groupBy { it.ranOn.mondayOfWeek() }
 
     // Through the week the runner is in now, or the week of the last Run where that is later — a
     // Run one day ahead of the phone can fall on the far side of a Monday, and a Run counted in
     // [qualifyingRuns] and then left out of the range would be a total no week accounts for.
-    val weeks = weeksFrom(firstRunOn, maxOf(through, counted.max()))
-        .map { week -> StageWeek(week, counts[week] ?: 0) }
+    val weeks = weeksFrom(firstRunOn, maxOf(through, counted.maxOf { it.ranOn }))
+        .map { week ->
+            val weekRuns = byWeek[week].orEmpty()
+            StageWeek(
+                startingOn = week,
+                qualifyingRuns = weekRuns.size,
+                secondsByZone = weekRuns
+                    .flatMap { it.secondsByZone.entries }
+                    .groupingBy { it.key }
+                    .fold(0L) { total, entry -> total + entry.value },
+            )
+        }
 
     return StageTrainingRecord(
         firstRunOn = firstRunOn,

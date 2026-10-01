@@ -651,7 +651,8 @@ data class RunPause(
 )
 
 /**
- * A Run reduced to the one thing a Stage's training record counts it in (#289): the day it fell on.
+ * A Run reduced to what a Stage's training record reads of it: the day it fell on (#289), and the
+ * seconds it spent in each heart-rate zone (#528).
  *
  * Which Runs are in this set is the query's business — see
  * [SessionDao.getAiEvidenceRunDaysOfStage] — so nothing about *qualifying* is decided here.
@@ -666,6 +667,12 @@ data class StageEvidenceDayProjection(
     val startTime: Long,
     /** The Run's own stamp — see [RunnerSession.ranAtUtcOffsetSeconds] and [com.example.runningapp.ranOn]. */
     val ranAtUtcOffsetSeconds: Int? = null,
+    /** The Run's stored seconds in each zone — see [RunnerSession.zone1Seconds]. */
+    val zone1Seconds: Long = 0,
+    val zone2Seconds: Long = 0,
+    val zone3Seconds: Long = 0,
+    val zone4Seconds: Long = 0,
+    val zone5Seconds: Long = 0,
 )
 
 data class MaxSessionLoad30dProjection(
@@ -1408,7 +1415,8 @@ interface SessionDao {
     suspend fun getLast3AiEligibleRunsOfStage(stageId: String): List<RunnerSession>
 
     /**
-     * The day every qualifying Run of a Stage fell on — the Stage's training record (#289).
+     * The day every qualifying Run of a Stage fell on, and its seconds in each zone — the Stage's
+     * training record (#289, #528).
      *
      * The same Run this app will let a Stage be graduated on, and no other. Beside
      * [getLast3AiEligibleRunsOfStage]'s four conditions it adds the two that decide whether a Run
@@ -1423,12 +1431,13 @@ interface SessionDao {
      *
      * Unbounded on purpose. A LIMIT here would be a second keyhole in front of the fix for the first
      * one: what this answers is how long the runner has been training in this Stage, and a bound
-     * would silently shorten it. The projection is two columns, and a Stage holds a season of Runs
-     * at most.
+     * would silently shorten it. The projection is a handful of columns, and a Stage holds a season
+     * of Runs at most.
      */
     @Query(
         """
-        SELECT id, startTime, ranAtUtcOffsetSeconds FROM sessions
+        SELECT id, startTime, ranAtUtcOffsetSeconds,
+               zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds FROM sessions
         WHERE endTime > 0
           AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1

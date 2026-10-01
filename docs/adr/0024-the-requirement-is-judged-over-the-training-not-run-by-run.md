@@ -74,3 +74,9 @@ It does change how much the record is carrying. Under the per-Run question the r
 counterweight beside a Run's own numbers; under the cohort question it is the main evidence a
 requirement written in weeks is answered from. That is not a new hole, but it is a bigger one, and
 it is raised on its own as **#519** rather than re-argued here.
+
+## Followed by
+
+The 0.87 above was measured on a record that carried each week's Zone 2 seconds. The record as
+shipped measured nothing, and scored 0.79 on the phone (#527). See
+[ADR 0025](./0025-the-judges-record-carries-where-each-weeks-heart-rate-was.md).

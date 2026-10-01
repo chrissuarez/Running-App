@@ -369,13 +369,14 @@ private fun StringBuilder.appendStageTraining(record: StageTrainingRecord) {
             "0 is a week they did not train in this stage."
     )
     // What it may be used for. Judging the requirement from it is no longer any of it: that is
-    // asked of the judge, per run, as a typed question with the record beside it (#514). What the
+    // asked of the judge, as one typed question over the record and the Runs (#514, #516). What the
     // record is here for is the one thing it was always unambiguously good for — a debrief that
     // knows how the stage has actually been going.
     appendLine(
         "Use it in coachMessage to describe how their training in this stage has been going."
     )
-    // It counts runs and measures none of them, which still matters to the prose: a model reading
+    // This copy counts runs and measures none of them — the judge's copy carries each week's zone
+    // seconds (#528), this one does not — which still matters to the prose: a model reading
     // those ticks as Zone 2 weeks would tell the runner they have done four weeks of Zone 2 on the
     // strength of a list of dates.
     appendLine(
