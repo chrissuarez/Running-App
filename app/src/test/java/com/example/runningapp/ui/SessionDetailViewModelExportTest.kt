@@ -106,12 +106,15 @@ class SessionDetailViewModelExportTest {
 
     // -- Send to Garmin (#217) ----------------------------------------------------------------------
 
-    private class RecordingDownloadsStore(private val succeeds: Boolean = true) : DownloadsFileStore {
+    private class RecordingDownloadsStore(
+        private val succeeds: Boolean = true,
+        private val renameTo: String? = null,
+    ) : DownloadsFileStore {
         val saved = mutableListOf<Pair<String, ByteArray>>()
 
-        override suspend fun save(fileName: String, mimeType: String, contents: ByteArray): Boolean {
+        override suspend fun save(fileName: String, mimeType: String, contents: ByteArray): String? {
             saved += fileName to contents
-            return succeeds
+            return if (succeeds) renameTo ?: fileName else null
         }
     }
 
@@ -155,6 +158,17 @@ class SessionDetailViewModelExportTest {
 
         assertEquals(2, downloads.saved.size)
         assertEquals(downloads.saved[0].first, downloads.saved[1].first)
+    }
+
+    @Test
+    fun `the runner is told the name the store really used`() = runTest(dispatcher) {
+        // MediaStore numbers a name it cannot overwrite; pointing at the plain one names another file.
+        val viewModel = garminViewModel(RecordingDownloadsStore(renameTo = "run-x (1).fit"))
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertEquals("run-x (1).fit", viewModel.garminImportReady.value!!.fileName)
     }
 
     @Test

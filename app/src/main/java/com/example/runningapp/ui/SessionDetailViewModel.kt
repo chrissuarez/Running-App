@@ -689,16 +689,17 @@ class SessionDetailViewModel(
         viewModelScope.launch {
             val store = downloadsFileStore
             val built = if (store == null) null else assembleExport(sessionId, ExportFormat.FIT)
-            val saved = built != null && try {
+            // The name the store really used, which is what the runner has to look for.
+            val savedAs = if (built == null) null else try {
                 store!!.save(built.fileName, ExportFormat.FIT.mimeType, built.contents)
             } catch (e: Exception) {
                 Log.e("RunExport", "Failed to save FIT to Downloads for sessionId=$sessionId", e)
-                false
+                null
             }
-            if (built == null || !saved) {
+            if (savedAs == null) {
                 _exportShareFailed.value = sessionId
             } else {
-                _garminImportReady.value = GarminImportFile(sessionId, built.fileName)
+                _garminImportReady.value = GarminImportFile(sessionId, savedAs)
             }
         }
     }
