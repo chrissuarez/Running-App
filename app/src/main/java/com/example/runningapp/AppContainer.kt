@@ -21,8 +21,10 @@ import com.example.runningapp.data.RoomRecordBookStore
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.diagnostics.RunJournal
+import com.example.runningapp.export.DownloadsFileStore
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.FileProviderExportFileStore
+import com.example.runningapp.export.MediaStoreDownloadsFileStore
 import com.example.runningapp.restore.PendingRestore
 import com.example.runningapp.restore.migrationHrProfile
 import com.example.runningapp.data.RouteShapeCandidate
@@ -165,6 +167,11 @@ class AppContainer(context: Context) {
 
     val exportFileStore: ExportFileStore by lazy {
         FileProviderExportFileStore(appContext)
+    }
+
+    /** Where "Send to Garmin" leaves the run's file (#217). */
+    val downloadsFileStore: DownloadsFileStore by lazy {
+        MediaStoreDownloadsFileStore(appContext)
     }
 
     /**

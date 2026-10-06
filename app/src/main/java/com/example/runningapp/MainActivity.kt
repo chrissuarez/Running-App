@@ -42,6 +42,7 @@ import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
+import com.example.runningapp.export.GARMIN_IMPORT_URL
 import com.example.runningapp.export.exportShareChooser
 import com.example.runningapp.navigation.NavControllerPageStack
 import com.example.runningapp.navigation.Routes
@@ -369,6 +370,7 @@ class MainActivity : ComponentActivity() {
                             // The library, so a Run's Matched Runs card can call the ground by the
                             // runner's own name for it rather than "this route" (#74).
                             savedCourses = appContainer.savedCourseShapes,
+                            downloadsFileStore = appContainer.downloadsFileStore,
                             // Watched, not read once: a refusal that was only ever the switch's
                             // doing must stop being a refusal the moment the runner moves the
                             // switch back (#76).
@@ -491,6 +493,8 @@ class MainActivity : ComponentActivity() {
 
                     val exportShareReady by sessionDetailViewModel.exportShareReady.collectAsState()
                     val exportShareFailed by sessionDetailViewModel.exportShareFailed.collectAsState()
+                    // The FIT file the Garmin hand-off left in Downloads (#217), named by Run.
+                    val garminImportReady by sessionDetailViewModel.garminImportReady.collectAsState()
                     // What became of a Run kept as a course (#55), named by Run for the same reason.
                     val saveAsRouteMessage by sessionDetailViewModel.saveAsRouteMessage.collectAsState()
                     // Which Run's summary is being written, and which one's ask came back with
@@ -1031,6 +1035,20 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // The file is already in Downloads by the time this fires (#217), so the
+                            // page opens on something the runner can pick. Inside this destination and
+                            // gated on the run that asked, for the reason the chooser above is. The
+                            // screen says which file to pick; the browser is what takes the screen.
+                            LaunchedEffect(garminImportReady, sessionId) {
+                                garminImportReady?.takeIf { it.sessionId == sessionId }?.let {
+                                    runCatching {
+                                        startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(GARMIN_IMPORT_URL))
+                                        )
+                                    }
+                                }
+                            }
+
                             // What this run can be written as (#218). FIT needs nothing of the run
                             // but that it finished: a Run with neither Strap nor GPS still states a
                             // Duration and a Stated Distance, and a file saying so is the case this
@@ -1081,6 +1099,10 @@ class MainActivity : ComponentActivity() {
                                 },
                                 shareableFormats = shareableFormats,
                                 onShareRun = { id, format -> sessionDetailViewModel.shareRun(id, format) },
+                                onSendToGarmin = { id -> sessionDetailViewModel.sendToGarmin(id) },
+                                garminFileName = garminImportReady
+                                    ?.takeIf { it.sessionId == sessionId }?.fileName,
+                                onGarminNoteShown = { sessionDetailViewModel.garminImportHandled() },
                                 shareFailed = exportShareFailed != null && exportShareFailed == sessionId,
                                 onShareFailureShown = { sessionDetailViewModel.exportShareFailureShown() },
                                 // Offered only where the recording holds a route, which is the same
