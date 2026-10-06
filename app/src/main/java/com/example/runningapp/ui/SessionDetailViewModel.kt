@@ -9,10 +9,12 @@ import com.example.runningapp.data.RunSummaryOutcome
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.analysis.RunAnalysis
+import com.example.runningapp.export.DownloadsFileStore
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.export.ExportShareFile
 import com.example.runningapp.export.FitWriter
+import com.example.runningapp.export.GarminImportFile
 import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
@@ -73,6 +75,8 @@ class SessionDetailViewModel(
      * calling its own ground.
      */
     private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
+    /** Where the Garmin hand-off leaves its file (#217). Null wherever none is wired (tests). */
+    private val downloadsFileStore: DownloadsFileStore? = null,
 ) : ViewModel() {
 
     /**
@@ -149,6 +153,15 @@ class SessionDetailViewModel(
     /** The share sheet has been opened for the ready file; it is not offered again. */
     fun exportShareHandled() {
         _exportShareReady.value = null
+    }
+
+    // Same reasoning as [_exportShareReady]: held until the screen acknowledges it, named by Run.
+    private val _garminImportReady = MutableStateFlow<GarminImportFile?>(null)
+    val garminImportReady = _garminImportReady.asStateFlow()
+
+    /** The import page has been opened for the saved file. */
+    fun garminImportHandled() {
+        _garminImportReady.value = null
     }
 
     /** The failure has been shown to the runner. */
@@ -590,48 +603,14 @@ class SessionDetailViewModel(
                 _exportShareFailed.value = sessionId
                 return@launch
             }
-            val session = sessionRepository.getSession(sessionId)
-            if (session == null || !session.isFinished()) {
+            val built = assembleExport(sessionId, format)
+            if (built == null) {
                 _exportShareFailed.value = sessionId
                 return@launch
             }
-            // Track points come through the same #38 accuracy gate as the map, so the file matches
-            // the route the runner was shown.
-            val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
-            val hrSamples = sessionRepository.getHrSamples(sessionId)
-            if (format == ExportFormat.GPX && trackPoints.isEmpty()) {
-                _exportShareFailed.value = sessionId
-                return@launch
-            }
-            // Where this Run's clock stopped, which only the recorder could have written down (#328).
-            // Read below the refusal and only for the format that states them: GPX has no way to.
-            val recordedPauses =
-                if (format == ExportFormat.FIT) sessionRepository.getPauses(sessionId) else emptyList()
-            // Off the main thread: an hour's run is thousands of points, and the runner tapped Share
-            // expecting the sheet to open, not the screen to stall. FIT costs a walk of the track on
-            // top of the encoding, because its laps are the run's own splits.
-            //
-            // The name is decided beside the bytes rather than in a second `when` on the same
-            // format: they are one decision — what file this is — and split in two they could
-            // disagree, which is a `.gpx` full of FIT.
-            val fileName = RunExportName.fileName(session, format.extension)
-            val contents = withContext(assemblyDispatcher) {
-                when (format) {
-                    ExportFormat.GPX ->
-                        GpxWriter.write(RunGpxTrack.build(session, trackPoints, hrSamples))
-                            .toByteArray(Charsets.UTF_8)
-
-                    ExportFormat.FIT -> FitWriter.write(
-                        RunFitActivity.build(
-                            session = session,
-                            trackPoints = trackPoints,
-                            hrSamples = hrSamples,
-                            recordedPauses = recordedPauses,
-                            analysis = RunAnalysis.of(session, hrSamples, trackPoints),
-                        )
-                    )
-                }
-            }
+            val session = built.session
+            val fileName = built.fileName
+            val contents = built.contents
             val uri = try {
                 store.write(fileName, contents)
             } catch (e: Exception) {
@@ -648,6 +627,78 @@ class SessionDetailViewModel(
                     runName = RunExportName.runName(session),
                     format = format
                 )
+            }
+        }
+    }
+
+    /** A run written out as one file, before it has gone anywhere. */
+    private class BuiltExport(val session: RunnerSession, val fileName: String, val contents: ByteArray)
+
+    /**
+     * The file a run is written as, or null when it cannot be (#84, #218, #217). Shared by the share
+     * sheet and the Garmin hand-off, because "what file is this run" is one decision: split in two
+     * the Downloads copy and the shared copy could disagree about the same run.
+     *
+     * Track points come through the same #38 accuracy gate as the map, so the file matches the route
+     * the runner was shown. The name is decided beside the bytes rather than in a second `when` on
+     * the same format, which is how a `.gpx` full of FIT would happen.
+     */
+    private suspend fun assembleExport(sessionId: Long, format: ExportFormat): BuiltExport? {
+        val session = sessionRepository.getSession(sessionId)
+        if (session == null || !session.isFinished()) return null
+        val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
+        val hrSamples = sessionRepository.getHrSamples(sessionId)
+        if (format == ExportFormat.GPX && trackPoints.isEmpty()) return null
+        // Where this Run's clock stopped, which only the recorder could have written down (#328).
+        // Read below the refusal and only for the format that states them: GPX has no way to.
+        val recordedPauses =
+            if (format == ExportFormat.FIT) sessionRepository.getPauses(sessionId) else emptyList()
+        // Off the main thread: an hour's run is thousands of points, and the runner tapped a button
+        // expecting something to open, not the screen to stall. FIT costs a walk of the track on
+        // top of the encoding, because its laps are the run's own splits.
+        val contents = withContext(assemblyDispatcher) {
+            when (format) {
+                ExportFormat.GPX ->
+                    GpxWriter.write(RunGpxTrack.build(session, trackPoints, hrSamples))
+                        .toByteArray(Charsets.UTF_8)
+
+                ExportFormat.FIT -> FitWriter.write(
+                    RunFitActivity.build(
+                        session = session,
+                        trackPoints = trackPoints,
+                        hrSamples = hrSamples,
+                        recordedPauses = recordedPauses,
+                        analysis = RunAnalysis.of(session, hrSamples, trackPoints),
+                    )
+                )
+            }
+        }
+        return BuiltExport(session, RunExportName.fileName(session, format.extension), contents)
+    }
+
+    /**
+     * Leaves the run's FIT file in the phone's Downloads and announces it on [garminImportReady]
+     * (#217). Garmin Connect's phone app has no activity import, its web page does, and a browser's
+     * file picker can reach Downloads but not this app's cache. FIT rather than GPX: it carries
+     * heart rate, laps and timer time, and Garmin reads it as an activity.
+     *
+     * Saving the same run again overwrites its own file. A failure reports on [exportShareFailed],
+     * which says the file could not be made — true of this too.
+     */
+    fun sendToGarmin(sessionId: Long) {
+        viewModelScope.launch {
+            val store = downloadsFileStore
+            val built = if (store == null) null else assembleExport(sessionId, ExportFormat.FIT)
+            val saved = built != null && try {
+                store!!.save(built.fileName, ExportFormat.FIT.mimeType, built.contents)
+            } catch (e: Exception) {
+                Log.e("RunExport", "Failed to save FIT to Downloads for sessionId=$sessionId", e)
+                false
+            }
+            if (built == null || !saved) {
+                _exportShareFailed.value = sessionId
+            } else {
+                _garminImportReady.value = GarminImportFile(sessionId, built.fileName)
             }
         }
     }
@@ -669,6 +720,7 @@ class SessionDetailViewModelFactory(
     private val aiSummariesAllowed: Flow<Boolean>? = null,
     private val runRouteSaver: RunRouteSaver? = null,
     private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
+    private val downloadsFileStore: DownloadsFileStore? = null,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
@@ -680,6 +732,7 @@ class SessionDetailViewModelFactory(
                 aiSummariesAllowed = aiSummariesAllowed,
                 runRouteSaver = runRouteSaver,
                 savedCourses = savedCourses,
+                downloadsFileStore = downloadsFileStore,
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
