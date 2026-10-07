@@ -89,11 +89,8 @@ fun SessionDetailScreen(
     shareFailed: Boolean = false,
     onShareFailureShown: () -> Unit = {},
     // "Send to Garmin" (#217): the run's FIT file goes to Downloads and Garmin's web import page
-    // opens. [garminFileName] is the file now waiting there, shown once so the runner knows which
-    // one to pick on that page.
+    // opens ([com.example.runningapp.MainActivity] does the opening and says which file to pick).
     onSendToGarmin: (Long) -> Unit = {},
-    garminFileName: String? = null,
-    onGarminNoteShown: () -> Unit = {},
     // Cutting a named stretch of ground out of this Run's track (#69). Null on every Run that has
     // no track to cut one from — a treadmill Run, and history from before #37 — which is what keeps
     // the button off a page with no map above it.
@@ -173,16 +170,6 @@ fun SessionDetailScreen(
         if (shareFailed) {
             snackbarHostState.showSnackbar("Couldn't create the file for this run")
             onShareFailureShown()
-        }
-    }
-
-    LaunchedEffect(garminFileName) {
-        if (garminFileName != null) {
-            snackbarHostState.showSnackbar(
-                "Saved $garminFileName to Downloads. Pick it on Garmin's import page.",
-                duration = SnackbarDuration.Long
-            )
-            onGarminNoteShown()
         }
     }
 

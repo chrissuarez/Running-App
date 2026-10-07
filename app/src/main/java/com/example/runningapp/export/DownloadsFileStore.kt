@@ -44,12 +44,13 @@ class MediaStoreDownloadsFileStore(context: Context) : DownloadsFileStore {
             try {
                 val existing = findOwn(fileName)
                 if (existing != null) {
-                    // "wt": truncate, so a shorter file never keeps the tail of a longer one.
-                    val out = resolver.openOutputStream(existing, "wt")
-                    if (out != null) {
-                        out.use { it.write(contents) }
-                        return@withContext displayName(existing) ?: fileName
-                    }
+                    // A stale row — its file deleted elsewhere — throws here; that must fall
+                    // through to a fresh insert rather than fail every later send.
+                    val overwritten = runCatching {
+                        // "wt": truncate, so a shorter file never keeps the tail of a longer one.
+                        resolver.openOutputStream(existing, "wt")?.use { it.write(contents) } != null
+                    }.getOrDefault(false)
+                    if (overwritten) return@withContext displayName(existing) ?: fileName
                 }
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -92,21 +93,31 @@ class MediaStoreDownloadsFileStore(context: Context) : DownloadsFileStore {
      */
     private fun findOwn(fileName: String): Uri? {
         val dot = fileName.lastIndexOf('.')
-        val numbered = if (dot < 0) "$fileName (%)" else fileName.substring(0, dot) + " (%)" + fileName.substring(dot)
+        val base = if (dot < 0) fileName else fileName.substring(0, dot)
+        val extension = if (dot < 0) "" else fileName.substring(dot)
+        // LIKE only narrows the query: '_' and '%' in a name are wildcards, so the exact shape is
+        // checked below.
+        val like = escapeLike(base) + "%" + escapeLike(extension)
+        val shape = Regex(Regex.escape(base) + "( \\(\\d+\\))?" + Regex.escape(extension))
         resolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Downloads._ID),
-            "(${MediaStore.Downloads.DISPLAY_NAME} = ? OR ${MediaStore.Downloads.DISPLAY_NAME} LIKE ?) " +
+            arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME),
+            "${MediaStore.Downloads.DISPLAY_NAME} LIKE ? ESCAPE '\\' " +
                 "AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
-            arrayOf(fileName, numbered, "${Environment.DIRECTORY_DOWNLOADS}/"),
+            arrayOf(like, "${Environment.DIRECTORY_DOWNLOADS}/"),
             "${MediaStore.Downloads.DATE_ADDED} DESC"
         )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                return ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0))
+            while (cursor.moveToNext()) {
+                if (shape.matches(cursor.getString(1) ?: continue)) {
+                    return ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(0))
+                }
             }
         }
         return null
     }
+
+    private fun escapeLike(text: String): String =
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 }
 
 /** Garmin Connect's web page for uploading a finished activity file (#217). */
