@@ -156,6 +156,7 @@ class SessionDetailViewModel(
     }
 
     // Same reasoning as [_exportShareReady]: held until the screen acknowledges it, named by Run.
+    private var garminSendInFlight = false
     private val _garminImportReady = MutableStateFlow<GarminImportFile?>(null)
     val garminImportReady = _garminImportReady.asStateFlow()
 
@@ -686,20 +687,33 @@ class SessionDetailViewModel(
      * which says the file could not be made — true of this too.
      */
     fun sendToGarmin(sessionId: Long) {
+        // A second tap while the first is still writing would find nothing to overwrite and insert
+        // a second, numbered file.
+        if (garminSendInFlight) return
+        val store = downloadsFileStore
+        if (store == null) {
+            _exportShareFailed.value = sessionId
+            return
+        }
+        garminSendInFlight = true
         viewModelScope.launch {
-            val store = downloadsFileStore
-            val built = if (store == null) null else assembleExport(sessionId, ExportFormat.FIT)
-            // The name the store really used, which is what the runner has to look for.
-            val savedAs = if (built == null) null else try {
-                store!!.save(built.fileName, ExportFormat.FIT.mimeType, built.contents)
-            } catch (e: Exception) {
-                Log.e("RunExport", "Failed to save FIT to Downloads for sessionId=$sessionId", e)
-                null
-            }
-            if (savedAs == null) {
-                _exportShareFailed.value = sessionId
-            } else {
-                _garminImportReady.value = GarminImportFile(sessionId, savedAs)
+            try {
+                // The name the store really used, which is what the runner has to look for.
+                val savedAs = try {
+                    assembleExport(sessionId, ExportFormat.FIT)?.let {
+                        store.save(it.fileName, ExportFormat.FIT.mimeType, it.contents)
+                    }
+                } catch (e: Exception) {
+                    Log.e("RunExport", "Failed to send sessionId=$sessionId to Garmin", e)
+                    null
+                }
+                if (savedAs == null) {
+                    _exportShareFailed.value = sessionId
+                } else {
+                    _garminImportReady.value = GarminImportFile(sessionId, savedAs)
+                }
+            } finally {
+                garminSendInFlight = false
             }
         }
     }

@@ -2,6 +2,7 @@ package com.example.runningapp
 
 import android.Manifest
 import android.net.Uri
+import android.widget.Toast
 import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.StartRunRequest
@@ -1037,15 +1038,29 @@ class MainActivity : ComponentActivity() {
 
                             // The file is already in Downloads by the time this fires (#217), so the
                             // page opens on something the runner can pick. Inside this destination and
-                            // gated on the run that asked, for the reason the chooser above is. The
-                            // screen says which file to pick; the browser is what takes the screen.
+                            // gated on the run that asked, for the reason the chooser above is. It is
+                            // handled on the spot, so a recreated activity or a return to this run
+                            // cannot open the page a second time. The note is a Toast, not a
+                            // snackbar: the browser takes the screen at once, and a snackbar would
+                            // time out behind it unseen.
                             LaunchedEffect(garminImportReady, sessionId) {
-                                garminImportReady?.takeIf { it.sessionId == sessionId }?.let {
-                                    runCatching {
+                                garminImportReady?.takeIf { it.sessionId == sessionId }?.let { ready ->
+                                    val opened = runCatching {
                                         startActivity(
                                             Intent(Intent.ACTION_VIEW, Uri.parse(GARMIN_IMPORT_URL))
                                         )
-                                    }
+                                    }.isSuccess
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        if (opened) {
+                                            "Saved ${ready.fileName} to Downloads. Pick it on Garmin's import page."
+                                        } else {
+                                            "Saved ${ready.fileName} to Downloads, but no browser would open. " +
+                                                "Upload it at connect.garmin.com/app/import-data."
+                                        },
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    sessionDetailViewModel.garminImportHandled()
                                 }
                             }
 
@@ -1100,9 +1115,6 @@ class MainActivity : ComponentActivity() {
                                 shareableFormats = shareableFormats,
                                 onShareRun = { id, format -> sessionDetailViewModel.shareRun(id, format) },
                                 onSendToGarmin = { id -> sessionDetailViewModel.sendToGarmin(id) },
-                                garminFileName = garminImportReady
-                                    ?.takeIf { it.sessionId == sessionId }?.fileName,
-                                onGarminNoteShown = { sessionDetailViewModel.garminImportHandled() },
                                 shareFailed = exportShareFailed != null && exportShareFailed == sessionId,
                                 onShareFailureShown = { sessionDetailViewModel.exportShareFailureShown() },
                                 // Offered only where the recording holds a route, which is the same
