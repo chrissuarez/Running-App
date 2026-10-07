@@ -9,6 +9,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointDao
 import com.example.runningapp.data.TrackPointSource
+import com.example.runningapp.export.DownloadsFileStore
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.ExportFormat
 import com.garmin.fit.Decode
@@ -102,6 +103,119 @@ class SessionDetailViewModelExportTest {
         connectionState = "Connected",
         timestampMillis = startTime + elapsedSeconds * 1000
     )
+
+    // -- Send to Garmin (#217) ----------------------------------------------------------------------
+
+    private class RecordingDownloadsStore(
+        private val succeeds: Boolean = true,
+        private val renameTo: String? = null,
+    ) : DownloadsFileStore {
+        val saved = mutableListOf<Pair<String, ByteArray>>()
+
+        override suspend fun save(fileName: String, mimeType: String, contents: ByteArray): String? {
+            saved += fileName to contents
+            return if (succeeds) renameTo ?: fileName else null
+        }
+    }
+
+    private fun garminViewModel(
+        downloads: DownloadsFileStore?,
+        session: RunnerSession? = session().copy(distanceKm = 5.0),
+    ) = SessionDetailViewModel(
+        repository(session = session),
+        null,
+        dispatcher,
+        downloadsFileStore = downloads,
+    )
+
+    @Test
+    fun `send to Garmin leaves the run's FIT in Downloads and announces it`() = runTest(dispatcher) {
+        val downloads = RecordingDownloadsStore()
+        val viewModel = garminViewModel(downloads)
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        val (name, bytes) = downloads.saved.single()
+        assertTrue("file name was $name", name.endsWith(".fit"))
+        assertEquals(1, decode(bytes).filterIsInstance<SessionMesg>().size)
+        val ready = viewModel.garminImportReady.value!!
+        assertEquals(7L, ready.sessionId)
+        assertEquals(name, ready.fileName)
+        assertNull(viewModel.exportShareFailed.value)
+    }
+
+    @Test
+    fun `sending the same run twice asks for the same file name both times`() = runTest(dispatcher) {
+        // The store overwrites by name, so one name per run is what keeps Downloads from piling up.
+        val downloads = RecordingDownloadsStore()
+        val viewModel = garminViewModel(downloads)
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertEquals(2, downloads.saved.size)
+        assertEquals(downloads.saved[0].first, downloads.saved[1].first)
+    }
+
+    @Test
+    fun `the runner is told the name the store really used`() = runTest(dispatcher) {
+        // MediaStore numbers a name it cannot overwrite; pointing at the plain one names another file.
+        val viewModel = garminViewModel(RecordingDownloadsStore(renameTo = "run-x (1).fit"))
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertEquals("run-x (1).fit", viewModel.garminImportReady.value!!.fileName)
+    }
+
+    @Test
+    fun `a Downloads write that fails reports and announces nothing`() = runTest(dispatcher) {
+        val viewModel = garminViewModel(RecordingDownloadsStore(succeeds = false))
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertEquals(7L, viewModel.exportShareFailed.value)
+        assertNull(viewModel.garminImportReady.value)
+    }
+
+    @Test
+    fun `a run still being recorded is never sent to Garmin`() = runTest(dispatcher) {
+        val downloads = RecordingDownloadsStore()
+        val viewModel = garminViewModel(downloads, session().copy(endTime = 0))
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertTrue(downloads.saved.isEmpty())
+        assertEquals(7L, viewModel.exportShareFailed.value)
+    }
+
+    @Test
+    fun `sending with no Downloads target wired reports a failure`() = runTest(dispatcher) {
+        val viewModel = garminViewModel(null)
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+
+        assertEquals(7L, viewModel.exportShareFailed.value)
+        assertNull(viewModel.garminImportReady.value)
+    }
+
+    @Test
+    fun `the Garmin note is kept until the screen has shown it`() = runTest(dispatcher) {
+        val viewModel = garminViewModel(RecordingDownloadsStore())
+
+        viewModel.sendToGarmin(7L)
+        advanceUntilIdle()
+        assertTrue(viewModel.garminImportReady.value != null)
+
+        viewModel.garminImportHandled()
+        assertNull(viewModel.garminImportReady.value)
+    }
 
     // -- What a run must have before it can be written at all --------------------------------------
 

@@ -88,6 +88,9 @@ fun SessionDetailScreen(
     onShareRun: (Long, ExportFormat) -> Unit = { _, _ -> },
     shareFailed: Boolean = false,
     onShareFailureShown: () -> Unit = {},
+    // "Send to Garmin" (#217): the run's FIT file goes to Downloads and Garmin's web import page
+    // opens ([com.example.runningapp.MainActivity] does the opening and says which file to pick).
+    onSendToGarmin: (Long) -> Unit = {},
     // Cutting a named stretch of ground out of this Run's track (#69). Null on every Run that has
     // no track to cut one from — a treadmill Run, and history from before #37 — which is what keeps
     // the button off a page with no map above it.
@@ -240,6 +243,18 @@ fun SessionDetailScreen(
                                     onClick = {
                                         showFormats = false
                                         onShareRun(session.id, format)
+                                    }
+                                )
+                            }
+                            // Beside the FIT entry because it is that file: Garmin's phone app has
+                            // no activity import, so this saves it where a browser can reach it
+                            // and opens the page that does (#217).
+                            if (ExportFormat.FIT in shareableFormats) {
+                                DropdownMenuItem(
+                                    text = { Text("Send to Garmin") },
+                                    onClick = {
+                                        showFormats = false
+                                        onSendToGarmin(session.id)
                                     }
                                 )
                             }
