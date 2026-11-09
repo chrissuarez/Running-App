@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.RunSummaryOutcome
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
