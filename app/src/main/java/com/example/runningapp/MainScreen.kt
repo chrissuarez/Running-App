@@ -96,7 +96,7 @@ fun MainScreen(
     onOpenSegments: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
     onToggleSimulation: (Boolean, StartRunRequest) -> Unit,
-    onRunModeChange: (String) -> Unit
+    onRunModeChange: (RunMode) -> Unit
 ) {
     // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
     // Defaults off every time the screen loads, so the plan is always queued unless actively skipped.
@@ -284,7 +284,7 @@ fun MainScreen(
     // different Runs.
     val startRunRequest = StartRunRequest(
         skipPlan = skipPlanToday,
-        runMode = RunMode.ofSettingValue(selectedRunMode),
+        runMode = selectedRunMode,
         pickedWorkoutId = todaysWorkoutId,
         // The switch is against the course's usual way and the Run writes down against its line as
         // kept; the two differ where the course was flipped (#466).
@@ -437,7 +437,7 @@ fun MainScreen(
 
                 // Not offered where a Run could not set out on a course anyway (#56) — asked of the
                 // rule rather than spelled here, so the screen and the rulebook cannot disagree.
-                if (!isSessionActive && runModeCanSetOutOnARoute(RunMode.ofSettingValue(selectedRunMode))) {
+                if (!isSessionActive && runModeCanSetOutOnARoute(selectedRunMode)) {
                     item {
                         RoutePickerCard(
                             routes = routes,

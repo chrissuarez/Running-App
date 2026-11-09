@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.run.RunMode
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,7 +31,7 @@ fun SettingsSummaryCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
-                val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
+                val modeLabel = if (settings.runMode == RunMode.OUTDOOR) "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel", style = MaterialTheme.typography.bodySmall)
             }
             Text(

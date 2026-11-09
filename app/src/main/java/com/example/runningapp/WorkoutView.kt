@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.run.RunMode
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -173,7 +175,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
 
             // The run's pinned mode, not the live setting (see HrState.activeRunMode): an outdoor
             // run started right after the mode toggle must render its map from the first second.
-            if ((state.activeRunMode ?: state.userSettings.runMode) == "outdoor") {
+            if ((state.activeRunMode ?: state.userSettings.runMode) == RunMode.OUTDOOR) {
                 val mapSessionId = state.activeDbSessionId
                 if (mapSessionId != null) {
                     Spacer(modifier = Modifier.height(12.dp))

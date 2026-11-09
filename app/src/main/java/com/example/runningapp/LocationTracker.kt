@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.run.RunMode
+
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -74,12 +76,12 @@ class LocationTracker(
     // Decide from the passed runMode/isSimulationEnabled, not a captured settings snapshot: START
     // supplies the just-tapped mode (effectiveRunMode), which can lead the async settings write, so
     // reading currentSettings here would skip GPS on an outdoor run started right after the switch.
-    fun restartIfNeeded(trigger: String, runMode: String, isSimulationEnabled: Boolean) {
-        if (runMode == "outdoor" && !isSimulationEnabled) {
-            logDecision("start", "trigger=$trigger runMode=$runMode simulation=$isSimulationEnabled")
+    fun restartIfNeeded(trigger: String, runMode: RunMode, isSimulationEnabled: Boolean) {
+        if (runMode == RunMode.OUTDOOR && !isSimulationEnabled) {
+            logDecision("start", "trigger=$trigger runMode=${runMode.settingValue} simulation=$isSimulationEnabled")
             start()
         } else {
-            logDecision("skip_start", "trigger=$trigger runMode=$runMode simulation=$isSimulationEnabled")
+            logDecision("skip_start", "trigger=$trigger runMode=${runMode.settingValue} simulation=$isSimulationEnabled")
         }
     }
 

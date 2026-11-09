@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.run.RunMode
+
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
@@ -54,7 +56,7 @@ data class UserSettings(
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
-    val runMode: String = "treadmill", // "treadmill" or "outdoor"
+    val runMode: RunMode = RunMode.TREADMILL,
     val splitAnnouncementsEnabled: Boolean = true,
     // The halfway "turn around" cue (#208). See RunControls.turnaroundCueEnabled for why it is on.
     val turnaroundCueEnabled: Boolean = true,
@@ -785,7 +787,7 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
         targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
         coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
         aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
-        runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
+        runMode = RunMode.ofSettingValue(preferences[PreferencesKeys.RUN_MODE]),
         splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
         turnaroundCueEnabled = preferences[PreferencesKeys.TURNAROUND_CUE_ENABLED] ?: true,
         autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
@@ -939,7 +941,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     /** Storage, not a setting (#112): how the record screen's toggle pre-fills next time. */
-    suspend fun setRunMode(runMode: String) = put(PreferencesKeys.RUN_MODE, runMode)
+    suspend fun setRunMode(runMode: RunMode) = put(PreferencesKeys.RUN_MODE, runMode.settingValue)
 
     suspend fun saveDevice(address: String, name: String, makeActive: Boolean = true) {
         context.dataStore.edit { preferences ->

@@ -167,11 +167,11 @@ data class HrState(
     // Post-run "How did that feel?" sheet: DB row id for the session the UI should prompt about
     val activeDbSessionId: Long? = null,
 
-    // The live run's pinned mode ("outdoor"/"treadmill"), published with RUNNING and cleared at
+    // The live run's pinned mode, published with RUNNING and cleared at
     // stop. Active-run UI must gate distance/map on this, not userSettings.runMode: the settings
     // write from a just-tapped mode toggle is async, so an outdoor run started immediately after
     // the tap would otherwise render as a treadmill run while GPS records underneath.
-    val activeRunMode: String? = null,
+    val activeRunMode: RunMode? = null,
 
     // The heart rates the live run's zones are sliced from, pinned at START with everything else
     // in RunConfig (ADR 0002). The screen must prefer this over userSettings.hrProfile for the
@@ -891,7 +891,7 @@ class HrForegroundService : Service() {
                 // will be attached to.
                 activeTargetZone = if (live) run.config?.targetZone else null,
                 activeHrProfile = if (live) run.config?.hrProfile else null,
-                activeRunMode = if (live) run.config?.runMode?.settingValue else null,
+                activeRunMode = if (live) run.config?.runMode else null,
                 activeDbSessionId = if (live) run.runRowId else null,
             )
         }
@@ -1139,7 +1139,7 @@ class HrForegroundService : Service() {
         locationTracker?.clearAutoPauseState()
         // The Run asks for GPS only on an outdoor Run. Simulation's veto stays with the tracker,
         // which is where it was: a simulated run records the mode it chose but no route.
-        locationTracker?.restartIfNeeded("run", RunMode.OUTDOOR.settingValue, isSimulationEnabled)
+        locationTracker?.restartIfNeeded("run", RunMode.OUTDOOR, isSimulationEnabled)
     }
 
     /**
@@ -1449,7 +1449,7 @@ class HrForegroundService : Service() {
      * the Simulate button quietly recorded a different Run from the one START would have.
      */
     private fun runModeAskedFor(intent: Intent): RunMode =
-        RunMode.ofSettingValue(intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode)
+        intent.getStringExtra(EXTRA_RUN_MODE)?.let(RunMode::ofSettingValue) ?: currentSettings.runMode
 
     /** The settings the runner may still change mid-Run, delivered as events rather than read. */
     private fun controlsFrom(settings: UserSettings) = RunControls(
@@ -2671,7 +2671,7 @@ class HrForegroundService : Service() {
      * Promotion in place for the Run to justify rather than reconciling it away before the Run has
      * had a chance to publish.
      */
-    fun setSimulationEnabled(enabled: Boolean, runMode: RunMode = RunMode.ofSettingValue(currentSettings.runMode)): Boolean {
+    fun setSimulationEnabled(enabled: Boolean, runMode: RunMode = currentSettings.runMode): Boolean {
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
             Log.d(TAG, "Simulation unchanged: enabled=$isSimulationEnabled status=${_hrState.value.lifecycle}")
