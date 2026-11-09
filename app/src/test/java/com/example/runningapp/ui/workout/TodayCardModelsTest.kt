@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.run.RunMode
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.DebriefAuthor
@@ -46,7 +47,7 @@ class TodayCardModelsTest {
         settings: UserSettings = this.settings,
         prescriptions: CoachPrescriptions = CoachPrescriptions.NONE,
         nowEpochMillis: Long = now,
-        runMode: String = "outdoor",
+        runMode: RunMode = RunMode.OUTDOOR,
         skippedToday: Boolean = false,
         testDue: Boolean = false
     ) = todayCardUiState(
@@ -129,7 +130,7 @@ class TodayCardModelsTest {
 
     @Test
     fun `treadmill has no splits to promise`() {
-        val state = card(stageTitle = null, workout = null, runMode = "treadmill")
+        val state = card(stageTitle = null, workout = null, runMode = RunMode.TREADMILL)
         assertEquals("Zone coaching on", state.detailLine)
     }
 
@@ -139,7 +140,7 @@ class TodayCardModelsTest {
             stageTitle = null,
             workout = null,
             settings = settings.copy(coachingEnabled = false),
-            runMode = "treadmill"
+            runMode = RunMode.TREADMILL
         )
         assertEquals("Zone coaching off", state.detailLine)
     }

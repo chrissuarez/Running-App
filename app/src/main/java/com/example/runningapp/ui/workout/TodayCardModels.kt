@@ -1,5 +1,7 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.run.RunMode
+
 import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.HrZone
@@ -107,7 +109,7 @@ fun todayCardUiState(
     settings: UserSettings,
     prescriptions: CoachPrescriptions,
     nowEpochMillis: Long,
-    runMode: String,
+    runMode: RunMode,
     skippedToday: Boolean,
     /**
      * Whether the Stage's Test is due — three weeks since the last one and Form above −10 (#292),
@@ -206,9 +208,9 @@ private fun targetPill(zone: HrZone): String = "Target: ${zone.zoneName}"
  * otherwise wonder about, and promises splits only where they can happen — they are measured from
  * GPS, so a treadmill run has none.
  */
-private fun openRunPromise(settings: UserSettings, runMode: String): String = buildList {
+private fun openRunPromise(settings: UserSettings, runMode: RunMode): String = buildList {
     add(if (settings.coachingEnabled) "Zone coaching on" else "Zone coaching off")
-    if (runMode == "outdoor" && settings.splitAnnouncementsEnabled) add("splits every 1 km")
+    if (runMode == RunMode.OUTDOOR && settings.splitAnnouncementsEnabled) add("splits every 1 km")
 }.joinToString(" · ")
 
 /** "5 × (5 min run / 1 min walk)", dropping the parts a workout doesn't have. */

@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.run.RunMode
+
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
 import androidx.compose.foundation.layout.*
@@ -12,14 +14,14 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.ui.theme.RunningUiTokens
 
 @Composable
-internal fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit) {
+internal fun RunModeSelector(runMode: RunMode, onRunModeChange: (RunMode) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         OutlinedButton(
-            onClick = { onRunModeChange("treadmill") },
+            onClick = { onRunModeChange(RunMode.TREADMILL) },
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = RunningUiTokens.MinTouchTarget),
-            colors = if (runMode == "treadmill") {
+            colors = if (runMode == RunMode.TREADMILL) {
                 ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             } else {
                 ButtonDefaults.outlinedButtonColors()
@@ -28,11 +30,11 @@ internal fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit)
             Text("Treadmill")
         }
         OutlinedButton(
-            onClick = { onRunModeChange("outdoor") },
+            onClick = { onRunModeChange(RunMode.OUTDOOR) },
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = RunningUiTokens.MinTouchTarget),
-            colors = if (runMode == "outdoor") {
+            colors = if (runMode == RunMode.OUTDOOR) {
                 ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             } else {
                 ButtonDefaults.outlinedButtonColors()

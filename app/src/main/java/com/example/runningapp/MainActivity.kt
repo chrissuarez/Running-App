@@ -298,7 +298,7 @@ class MainActivity : ComponentActivity() {
                     // The mode the finished Run was recorded in, kept beside its id: the sheet asks
                     // a treadmill Run how far it went (#231), and by the time it is on screen the
                     // Run is over and no longer has a mode to be asked for.
-                    var feelSheetRunMode by rememberSaveable { mutableStateOf<String?>(null) }
+                    var feelSheetRunMode by rememberSaveable { mutableStateOf<RunMode?>(null) }
 
                     // The course picked for the next Run, and which way round (#56). Above the
                     // NavHost, not inside the record screen, because the record screen is disposed
@@ -1731,7 +1731,7 @@ class MainActivity : ComponentActivity() {
                         FeelFeedbackSheet(
                             // A treadmill Run, said positively: anything else — an outdoor Run, or a
                             // Run whose mode is not known — is not asked.
-                            askForDistance = feelSheetRunMode == RunMode.TREADMILL.settingValue,
+                            askForDistance = feelSheetRunMode == RunMode.TREADMILL,
                             onSave = { effort, note, distanceKm, isWalk ->
                                 closeSheet(isWalk) {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)

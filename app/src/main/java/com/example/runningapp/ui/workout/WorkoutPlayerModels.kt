@@ -1,5 +1,7 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.run.RunMode
+
 import com.example.runningapp.CueCondition
 import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
@@ -143,7 +145,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // The run's pinned mode, not the live setting: the settings write from a just-tapped mode
     // toggle is async, and an outdoor run started right after the tap must still show
     // distance/pace while GPS records.
-    if ((state.activeRunMode ?: state.userSettings.runMode) == "outdoor") {
+    if ((state.activeRunMode ?: state.userSettings.runMode) == RunMode.OUTDOOR) {
         secondary += "Distance" to formatDistanceKm(state.distanceKm)
         if (state.paceMinPerKm > 0) {
             secondary += "Pace" to formatPace(state.paceMinPerKm)
