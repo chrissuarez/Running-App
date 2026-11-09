@@ -174,11 +174,12 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 7 October 2026</div>
+    <div class="kicker">Handbook · updated 9 November 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>Progress now says what counts towards Fitness, Fatigue and Form.</strong> A run with no heart rate is left out of all three, not counted as a zero; a Simulate mode run counts; a run belongs to the day it started; and changing an old run&rsquo;s feel, note or stated distance moves nothing, while marking it a walk does. See <em>What counts towards these numbers</em> in <a href="#progress">progress</a>.</p>
       <p><strong>A run can now be sent to Garmin in one tap.</strong> Open a run, tap the share icon and choose <strong>Send to Garmin</strong>. The app saves the run&rsquo;s file into your phone&rsquo;s <strong>Downloads</strong> folder and opens Garmin Connect&rsquo;s import page in your browser; a short message on screen names the file to pick. Garmin&rsquo;s phone app cannot take a finished run in, but its website can, and a browser can reach Downloads. Tap it twice on the same run and you still get one file. See <em>Sharing the run as a file</em> in <a href="#history">History</a>.</p>
       <p><strong>A plan finished on the judge&rsquo;s say-so is now recorded as finished.</strong> When the last stage asks for a judgement rather than a time, the stage judge saying yes used to congratulate you and record nothing &mdash; so every later Long run was judged again and congratulated again. Now the finish is recorded once: the card reads <span class="mono">Completed</span> and the day, with no time because nothing was timed, and the coach stops treating the stage as something still to reach. Your real plan ends on a time, so today this only reaches the Desk Test Plan. See <em>Finishing the plan</em> in <a href="#plan">the training plan</a>.</p>
       <p><strong>The stage judge now sees how hard each week was.</strong> Stage 1 asks for &ldquo;four weeks of consistent Zone 2 training&rdquo;. The separate AI that decides it was shown how many runs you did each week, and was told in so many words that the count said nothing about heart rate. So it could see the four weeks but not the Zone 2, and it kept landing just under the bar it has to clear. It is now shown, for every week of the stage, how much time your runs spent in each heart-rate zone &mdash; all five, so time <em>above</em> Zone 2 is as plain as time in it &mdash; and it is told to weigh time above the zone against a Zone 2 ask. Tested on your own runs: two weeks scored 0.07, a clear no, and the same five weeks with the Zone 2 and Zone 4 time swapped scored 0.66 to 0.75, also a no. Your real five weeks score right around the 0.8 bar, because in mid-September about half your time was above Zone 2. If a Long run does not pass you, the next one asks again. The bar itself has not moved. See <em>What graduates you</em> in <a href="#plan">the training plan</a>.</p>
@@ -485,7 +486,7 @@
           <li>takes <strong>no record of any kind</strong>, completes no prescribed workout, and graduates no stage;</li>
           <li>leaves every segment and every matched-run group it was in, and is recognised on no <strong>route</strong>. Unmark it and it is measured back in everywhere.</li>
         </ul>
-        <p class="note"><b>Marking an old run a walk changes the numbers since.</b> Fitness, fatigue and form from that day forward all move. They are a live read of the truth, and the alternative is leaving numbers up that we know are wrong.</p>
+        <p class="note"><b>Marking an old run a walk changes the numbers since.</b> Fitness, fatigue and form from that day forward all move. They are a live read of the truth, and the alternative is leaving numbers up that we know are wrong. See <a href="#what-counts">What counts towards these numbers</a> for the other changes that do and do not move them.</p>
       </div>
 
       <div class="e">
@@ -660,6 +661,18 @@
           <li><strong>Fitness</strong> — your effort scores averaged over 42 days. Slow to move. What you have built.</li>
           <li><strong>Fatigue</strong> — the same over 7 days. Quick to move. What you are carrying.</li>
           <li><strong>Form</strong> — yesterday's fitness less yesterday's fatigue. How fresh you are <em>this morning</em>, before today's run has cost anything. Saving it does not move today&rsquo;s Form, because a run you <em>start</em> today cannot change how fresh you were this morning: the screen says <span class="mono">Form shows how you start today. A run you start today is not in it.</span> It says that and stops, rather than promising when the number will next move: that depends on which day your training landed on, and a run counts on the day it <em>started</em>. Above <span class="mono">+10</span> is fresh; below <span class="mono">−10</span> is fatigued.</li>
+        </ul>
+        <p>Which runs go into the three, and which changes move them, is under <a href="#what-counts">What counts towards these numbers</a>.</p>
+      </div>
+
+      <div class="e" id="what-counts">
+        <h3>What counts towards these numbers</h3>
+        <ul class="plain">
+          <li><strong>A run needs heart rate to count.</strong> A run that recorded no heart rate at all has no effort score, so it is left out of Fitness, Fatigue and Form altogether &mdash; not counted as a zero. It still fills the weekly bars and counts towards your goals.</li>
+          <li><strong>A Simulate mode run counts.</strong> It wears no strap, but it feeds the app heart rates just as a strap would, so it gets an effort score and moves the numbers like any other run.</li>
+          <li><strong>A run counts on the day it started</strong>, by the clock where you set off. A run that crosses midnight belongs to the day you started it.</li>
+          <li><strong>Some changes to an old run move nothing here.</strong> Changing how it felt, its note, or a treadmill run&rsquo;s stated distance leaves all three numbers as they were.</li>
+          <li><strong>Some changes move the numbers since.</strong> Marking an old run a walk, or taking the mark off, moves every day from that run onwards &mdash; see <em>Marking an old run a walk changes the numbers since</em> in <a href="#after">after a run</a>. So can confirming your maximum on the Max HR card or stating your resting heart rate, because both work your past runs&rsquo; scores out again.</li>
         </ul>
       </div>
 
@@ -1216,7 +1229,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>7 October 2026</strong>. A run can be sent to Garmin in one tap. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>9 November 2026</strong>. Progress now says what counts towards Fitness, Fatigue and Form. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
