@@ -844,10 +844,21 @@ class RunPhaseTest {
 
         val effects = driver.skipPhase()
 
-        assertTrue(effects.spoken().contains("Warm up skipped. Starting workout."))
+        assertTrue(effects.spoken().contains("Warm up skipped. Starting workout. Zone 2."))
         assertEquals(RunPhase.MAIN, driver.state.phase)
         assertTrue(driver.state.warmUpSkipped)
         assertEquals(0L, driver.state.phaseSecondsElapsed)
+    }
+
+    @Test
+    fun `a skipped warm-up leaves the zone out when coaching is off`() {
+        val driver = Driver()
+        driver.start(controls = RunControls(coachingEnabled = false))
+        driver.advance(5)
+
+        val effects = driver.skipPhase()
+
+        assertTrue(effects.spoken().contains("Warm up skipped. Starting workout."))
     }
 
     @Test

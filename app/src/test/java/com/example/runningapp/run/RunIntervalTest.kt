@@ -85,12 +85,12 @@ class RunIntervalStartTest {
         val tick = driver.advance(1)
         val spoken = skip.spoken() + tick.spoken()
 
-        // "Warm up skipped. Starting workout." on the tap; "Start running..." only on the next
+        // "Warm up skipped. Starting workout. Zone 2." on the tap; "Start running..." only on the next
         // pulse, exactly once, so the skip does not stack two cues nor open an Interval early (#149).
         assertEquals(1, spoken.count { it == "Start running, interval 1 of 6." })
         assertTrue(
             "the skip is announced before the interval cue",
-            spoken.indexOf("Warm up skipped. Starting workout.") <
+            spoken.indexOf("Warm up skipped. Starting workout. Zone 2.") <
                 spoken.indexOf("Start running, interval 1 of 6."),
         )
     }
