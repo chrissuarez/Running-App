@@ -3,6 +3,7 @@ package com.example.runningapp.run
 import com.example.runningapp.CueAction
 import com.example.runningapp.CueCondition
 import com.example.runningapp.CuePriority
+import com.example.runningapp.HrZone
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.bandWithHysteresis
@@ -81,7 +82,8 @@ object Run {
         )
         return RunOutcome(
             started,
-            listOf(
+            listOfNotNull(
+                startCue(event.config, event.controls.coachingEnabled),
                 RunEffect.CreateRunRow(
                     startedAtMillis = event.nowMillis,
                     targetZoneNumber = event.config.targetZone.number,
@@ -95,6 +97,46 @@ object Run {
                 ),
             ),
         )
+    }
+
+    /**
+     * What the Run says at START about the Workout it is following: how long the warm-up is, and
+     * the zone the main part aims at. Null for a Run with no Workout, and for a Test with no
+     * warm-up (flat out has no zone to hold). The zone is left out when Zone coaching is off —
+     * nothing will coach it — but the warm-up length is still said.
+     */
+    private fun startCue(config: RunConfig, coachingEnabled: Boolean): RunEffect.Speak? {
+        val workout = config.workout ?: return null
+        val parts = mutableListOf<String>()
+        if (config.warmUpSeconds > 0) parts += "Warm up is ${spokenLength(config.warmUpSeconds)}."
+        if (coachingEnabled && !workout.isTest) {
+            val zone = spokenZone(config.targetZone)
+            parts += if (config.warmUpSeconds > 0) "Then $zone, for the main workout." else "$zone, for the main workout."
+        }
+        if (parts.isEmpty()) return null
+        return RunEffect.Speak(parts.joinToString(" "), CuePriority.INSTRUCTION)
+    }
+
+    /** "Starting main workout", plus the zone when there is one to aim at and coaching is on. */
+    private fun mainStartCue(state: RunState): String {
+        val config = state.config
+        val workout = config?.workout
+        if (config == null || workout == null || workout.isTest || !state.controls.coachingEnabled) {
+            return "Starting main workout"
+        }
+        return "Starting main workout. Zone ${config.targetZone.number}."
+    }
+
+    private fun spokenZone(zone: HrZone) = "Zone ${zone.number}, ${zone.zoneName}"
+
+    /** "8 minutes", "1 minute 30 seconds", "45 seconds". */
+    private fun spokenLength(totalSeconds: Int): String {
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        val parts = mutableListOf<String>()
+        if (minutes > 0) parts += if (minutes == 1) "1 minute" else "$minutes minutes"
+        if (seconds > 0) parts += if (seconds == 1) "1 second" else "$seconds seconds"
+        return parts.joinToString(" ")
     }
 
     /**
@@ -248,7 +290,7 @@ object Run {
             // is what the Run does today, and this move is not the place to change what it says.
             if (phaseSecond && current.phase == RunPhase.WARM_UP && current.phaseSecondsElapsed >= limit) {
                 current = current.copy(phase = RunPhase.MAIN, phaseSecondsElapsed = 0)
-                effects += RunEffect.Speak("Starting main workout", CuePriority.INSTRUCTION)
+                effects += RunEffect.Speak(mainStartCue(current), CuePriority.INSTRUCTION)
             } else if (phaseSecond && current.phase == RunPhase.COOL_DOWN && current.phaseSecondsElapsed >= limit) {
                 // Bank the terminating second before ending on it. The Run counts it toward its
                 // duration, so its zone (or no-data) total must count it too, and it writes its HR
