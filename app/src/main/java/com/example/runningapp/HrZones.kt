@@ -448,6 +448,25 @@ fun tallyZoneSeconds(bpms: Iterable<Int>, profile: HrProfile): ZoneSeconds {
  */
 val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDefault(targetZone)
 
+/** Where a Run's target zone comes from. */
+enum class TargetZoneSource { WORKOUT, OPEN_RUN }
+
+/** The zone a Run will aim at, and whose word it is. */
+data class RunTargetZone(val zone: HrZone, val source: TargetZoneSource)
+
+/**
+ * The one rule for what a Run aims at: the attached Workout's zone when there is one, otherwise the
+ * open-run zone from settings (#107). The Run pins it at START and the home card shows it before
+ * START, both through here so they cannot disagree. Pass a null [workoutTargetZone] for a skipped
+ * or plan-less day.
+ */
+fun runTargetZone(workoutTargetZone: Int?, openRunZone: HrZone): RunTargetZone =
+    if (workoutTargetZone != null) {
+        RunTargetZone(HrZone.ofNumberOrDefault(workoutTargetZone), TargetZoneSource.WORKOUT)
+    } else {
+        RunTargetZone(openRunZone, TargetZoneSource.OPEN_RUN)
+    }
+
 /** The runner's stated heart rates, as the zone functions take them. */
 val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr, restingHr)
 

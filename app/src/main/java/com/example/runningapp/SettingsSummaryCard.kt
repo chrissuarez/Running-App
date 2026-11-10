@@ -13,7 +13,9 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 
 @Composable
 fun SettingsSummaryCard(
-    settings: UserSettings
+    settings: UserSettings,
+    /** The picked Workout's zone number; null on a skipped or plan-less day. */
+    workoutTargetZone: Int? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -25,11 +27,16 @@ fun SettingsSummaryCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                val target = settings.targetHrZone
+                val run = runTargetZone(workoutTargetZone, settings.targetHrZone)
+                val target = run.zone
                 Text(
                     "Zone ${target.number} · ${target.zoneName}: ${targetRangeLabel(target, settings.hrProfile)} BPM",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
+                )
+                Text(
+                    if (run.source == TargetZoneSource.WORKOUT) "From today's workout" else "Your open-run zone",
+                    style = MaterialTheme.typography.bodySmall
                 )
                 val modeLabel = if (settings.runMode == RunMode.OUTDOOR) "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel", style = MaterialTheme.typography.bodySmall)
