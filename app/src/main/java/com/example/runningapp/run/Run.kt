@@ -118,13 +118,18 @@ object Run {
     }
 
     /** "Starting main workout", plus the zone when there is one to aim at and coaching is on. */
-    private fun mainStartCue(state: RunState): String {
+    private fun mainStartCue(state: RunState): String =
+        mainZoneSuffix(state)?.let { "Starting main workout. $it" } ?: "Starting main workout"
+
+    /**
+     * " Zone 2." for the main Phase's handover — whether the warm-up ran out or was skipped —
+     * or null when there is no zone to aim at: no Workout, a Test, or coaching off.
+     */
+    private fun mainZoneSuffix(state: RunState): String? {
         val config = state.config
         val workout = config?.workout
-        if (config == null || workout == null || workout.isTest || !state.controls.coachingEnabled) {
-            return "Starting main workout"
-        }
-        return "Starting main workout. Zone ${config.targetZone.number}."
+        if (config == null || workout == null || workout.isTest || !state.controls.coachingEnabled) return null
+        return "Zone ${config.targetZone.number}."
     }
 
     private fun spokenZone(zone: HrZone) = "Zone ${zone.number}, ${zone.zoneName}"
@@ -930,7 +935,10 @@ object Run {
                 RunOutcome(
                     skipped,
                     listOf(
-                        RunEffect.Speak("Warm up skipped. Starting workout.", CuePriority.INSTRUCTION),
+                        RunEffect.Speak(
+                            listOfNotNull("Warm up skipped. Starting workout.", mainZoneSuffix(skipped)).joinToString(" "),
+                            CuePriority.INSTRUCTION,
+                        ),
                         RunEffect.Notify(notificationText(skipped)),
                     ),
                 )
