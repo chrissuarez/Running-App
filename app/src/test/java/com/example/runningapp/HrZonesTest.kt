@@ -659,3 +659,26 @@ class SuggestedMaxHrTest {
         assertEquals(120, suggestedMaxHrForAge(age = 100, restingHr = RESTING_HR_UNSTATED))
     }
 }
+
+class RunTargetZoneTest {
+    @Test
+    fun `a picked workout sets the zone`() {
+        val r = runTargetZone(2, HrZone.THRESHOLD)
+        assertEquals(HrZone.ofNumber(2), r.zone)
+        assertEquals(TargetZoneSource.WORKOUT, r.source)
+    }
+
+    @Test
+    fun `no workout falls back to the open-run zone`() {
+        val r = runTargetZone(null, HrZone.TEMPO)
+        assertEquals(HrZone.TEMPO, r.zone)
+        assertEquals(TargetZoneSource.OPEN_RUN, r.source)
+    }
+
+    @Test
+    fun `a workout zone number nothing matches lands on the default`() {
+        val r = runTargetZone(99, HrZone.TEMPO)
+        assertEquals(HrZone.DEFAULT_TARGET, r.zone)
+        assertEquals(TargetZoneSource.WORKOUT, r.source)
+    }
+}

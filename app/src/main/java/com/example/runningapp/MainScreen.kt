@@ -577,7 +577,10 @@ fun MainScreen(
                 }
 
                 item {
-                    SettingsSummaryCard(settings = state.userSettings)
+                    SettingsSummaryCard(
+                        settings = state.userSettings,
+                        workoutTargetZone = todaysWorkout?.targetZone
+                    )
                 }
 
                 if (isSessionActive) {

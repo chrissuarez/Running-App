@@ -1418,7 +1418,7 @@ class HrForegroundService : Service() {
             hrProfile = settings.hrProfile,
             // The Workout sets the target when a plan is attached; otherwise the global is the
             // fallback (#107).
-            targetZone = workout?.let { HrZone.ofNumberOrDefault(it.targetZone) } ?: settings.targetHrZone,
+            targetZone = runTargetZone(workout?.targetZone, settings.targetHrZone).zone,
             runMode = runMode,
             workout = workout,
             includeInAiTraining = settings.aiDataSharingEnabled && !settings.testingModeEnabled,
