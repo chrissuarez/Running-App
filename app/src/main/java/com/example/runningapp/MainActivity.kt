@@ -1284,6 +1284,13 @@ class MainActivity : ComponentActivity() {
                                     // So the charts redraw when the runner changes zone and not
                                     // only when history moves (#320).
                                     appContainer.zoneChanges,
+                                    // And again at midnight, so a screen left open overnight
+                                    // moves onto the new day (#525).
+                                    sessionRepository.dayTurns(
+                                        ZoneId::systemDefault,
+                                        java.time.Clock.systemUTC(),
+                                        appContainer.zoneChanges,
+                                    ),
                                 )
                             )
                             val progressState by progressViewModel.state.collectAsState()

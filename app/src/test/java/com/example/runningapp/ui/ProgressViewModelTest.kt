@@ -60,6 +60,10 @@ class ProgressViewModelTest {
     private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val today: LocalDate = LocalDate.of(2026, 8, 5)
 
+    /** The calendar turning over (#525) — buffered by one so a test can state midnight without a collector. */
+    private val dayChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private var theDay: LocalDate = today
+
     private val scoredRuns = MutableStateFlow<List<ScoredRunProjection>>(emptyList())
     private val runVolumes = MutableStateFlow<List<RunVolumeProjection>>(emptyList())
     private val sessionDao: SessionDao = mock()
@@ -173,6 +177,25 @@ class ProgressViewModelTest {
             advanceUntilIdle()
 
             assertEquals(LocalDate.of(2026, 8, 5), viewModel.state.value.curve.first().date)
+        }
+
+    @Test
+    fun `a screen left open across midnight moves onto the new day with no new score`() =
+        runTest(dispatcher) {
+            scoredRuns.value = listOf(runOn(today.minusDays(1), 100))
+            val viewModel = viewModel()
+            advanceUntilIdle()
+            assertEquals(today, viewModel.state.value.curve.last().date)
+            val formBefore = viewModel.state.value.today?.form
+
+            // Nothing about history moves: the clock passing midnight is the whole input.
+            theDay = today.plusDays(1)
+            assertTrue(dayChanges.tryEmit(Unit))
+            advanceUntilIdle()
+
+            assertEquals(today.plusDays(1), viewModel.state.value.curve.last().date)
+            assertEquals(today.plusDays(1), viewModel.state.value.today?.date)
+            assertTrue(formBefore != viewModel.state.value.today?.form)
         }
 
     @Test
@@ -556,7 +579,8 @@ class ProgressViewModelTest {
         goalDao = goalDao,
         zoneChanges = zoneChanges,
         zone = { here },
-        today = { today },
+        dayChanges = dayChanges,
+        today = { theDay },
         now = { setAt },
         curveDispatcher = dispatcher,
     )

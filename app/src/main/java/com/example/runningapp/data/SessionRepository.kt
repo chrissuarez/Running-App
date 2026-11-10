@@ -1580,7 +1580,7 @@ class SessionRepository(
      * loop where a change can land unheard.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun dayTurns(
+    fun dayTurns(
         zone: () -> ZoneId,
         clock: Clock,
         zoneChanges: Flow<Unit>,
