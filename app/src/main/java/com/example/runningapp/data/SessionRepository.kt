@@ -1565,15 +1565,17 @@ class SessionRepository(
      * not true now (#299).
      *
      * It sleeps to the next local midnight rather than polling, so an app left open costs one wake
-     * a day. A phone that dozes through midnight wakes the sleep late and the new day lands a moment
-     * after the runner returns to the screen, which is a prompt that appears rather than one that
-     * was already wrong — the direction [testDueFlow] wants (see its `initial = false`).
+     * a day. `delay` runs on uptime, so on its own the sleep would fire late after a doze and never
+     * notice a clock set by hand; [zoneChanges] also fires on the system's clock-set and date-change
+     * broadcasts (#525), which restart the sleep and re-read the day, so the new day lands when the
+     * phone wakes at or after midnight. Late rather than early is the direction [testDueFlow] wants
+     * (see its `initial = false`).
      *
      * Midnight is worked out in [zone]'s answer each time round, so the sleep is aimed at the
      * runner's own midnight through a timezone change or the end of summer time.
      *
      * But a sleep already running cannot re-aim itself, and that is what [zoneChanges] is for
-     * (#320). A runner who flies west has a sleep aimed at a midnight hours later than the one they
+     * (#320, #525). A runner who flies west has a sleep aimed at a midnight hours later than the one they
      * are now living in, so each nudge throws that sleep away and starts the loop over: it nudges
      * whoever is listening at once, in the new zone, and then aims a fresh sleep at the new
      * midnight. `flatMapLatest` rather than a race inside the sleep, so there is no moment in the

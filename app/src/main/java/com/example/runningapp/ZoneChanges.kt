@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
 
 /**
- * The runner changing zone, as something a rule can be woken by (#320).
+ * The runner changing zone (or the phone's clock moving), as something a rule can be woken by (#320).
  *
  * Today is observed and never captured (CONTEXT.md): every reader that places a Run on a day asks
  * the phone for the zone at the moment it answers. That settles what the answer *is*, and leaves
@@ -31,8 +31,16 @@ import kotlinx.coroutines.flow.shareIn
  * themselves, at the moment they answer, so nothing here can hand on a zone that was true when the
  * broadcast arrived and is not true now.
  *
- * `ACTION_TIMEZONE_CHANGED` is a protected broadcast — only the system can send it — so the
- * receiver is registered unexported and nothing but a real zone change can wake these readers.
+ * It fires on three system broadcasts, not only the zone: `ACTION_TIMEZONE_CHANGED`, and also
+ * `ACTION_TIME_CHANGED` (the wall clock was set by hand or by the network) and `ACTION_DATE_CHANGED`
+ * (the system's own midnight, delivered on wake after doze) (#525). The name stays because it began
+ * as the zone; what it now means is "the phone's idea of the time moved". A coroutine `delay` runs on
+ * uptime, so a sleep aimed at midnight neither notices a clock that was set nor counts the hours a
+ * dozing phone spent asleep — these broadcasts are what make `SessionRepository.dayTurns` re-aim.
+ * Every reader only re-reads on a nudge, so being nudged more often costs nothing but a re-read.
+ *
+ * All three are protected broadcasts — only the system can send them — so the receiver is
+ * registered unexported and nothing but the system can wake these readers.
  *
  * Shared with no replay and only while somebody is listening: the receiver is registered when the
  * first reader collects and unregistered when the last one stops, and a reader that arrives after a
@@ -49,7 +57,11 @@ fun systemZoneChanges(context: Context, scope: CoroutineScope): SharedFlow<Unit>
         ContextCompat.registerReceiver(
             context,
             receiver,
-            IntentFilter(Intent.ACTION_TIMEZONE_CHANGED),
+            IntentFilter().apply {
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_DATE_CHANGED)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         awaitClose { context.unregisterReceiver(receiver) }

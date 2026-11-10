@@ -143,7 +143,7 @@ class ProgressViewModel(
      * (yesterday's fitness less yesterday's fatigue) moves — with no new Score needed. The nudge
      * carries nothing: [today] is asked afresh when the curve is built. Production passes
      * `SessionRepository.dayTurns`, which sleeps to the next local midnight and restarts on a zone
-     * change; the screen being opened again still re-reads the day directly.
+     * or clock change (the sleep itself runs on uptime, so a set clock or a doze needs that); the screen being opened again still re-reads the day directly.
      *
      * Required rather than defaulted, for the same reason as [zoneChanges].
      */
