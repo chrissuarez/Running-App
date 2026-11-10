@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.HrState
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.theme.RunningUiTokens
+import com.example.runningapp.analysis.formatMinutesSeconds
 
 /**
  * Full-screen live map (#41): the same camera-follow/amber-trail/course-line/day-night [MapSurface]
@@ -103,7 +104,7 @@ private fun FullScreenMapStatsStrip(
                 modifier = Modifier.weight(1f)
             )
             MapStat(label = "Distance", value = formatDistanceKm(state.distanceKm), modifier = Modifier.weight(1f))
-            MapStat(label = "Elapsed", value = formatStopwatch(state.secondsRunning), modifier = Modifier.weight(1f))
+            MapStat(label = "Elapsed", value = formatMinutesSeconds(state.secondsRunning), modifier = Modifier.weight(1f))
         }
     }
 }

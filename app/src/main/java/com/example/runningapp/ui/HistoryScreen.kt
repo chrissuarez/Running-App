@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.ThumbPoint
+import com.example.runningapp.analysis.formatMinutesSeconds
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.ranAt
 import com.example.runningapp.run.RunMode
@@ -589,7 +590,7 @@ internal fun formatDuration(seconds: Long): String {
     val h = safe / 3600
     val m = (safe % 3600) / 60
     val s = safe % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else formatMinutesSeconds(safe)
 }
 
 // --- What the list looks like when the room runs out (#232) ---

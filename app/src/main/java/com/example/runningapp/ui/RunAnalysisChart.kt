@@ -43,6 +43,7 @@ import com.example.runningapp.analysis.kilometreTicks
 import com.example.runningapp.analysis.HeartRateReading
 import com.example.runningapp.analysis.HeartRateTrace
 import com.example.runningapp.analysis.RunChart
+import com.example.runningapp.analysis.formatMinutesSeconds
 import com.example.runningapp.data.formatMinutesPerKm
 import kotlin.math.roundToInt
 
@@ -570,7 +571,7 @@ private const val SilhouetteAlpha = 0.10f
 /** An axis tick: a round point on the Run's clock, kept short enough to sit under the chart. */
 private fun formatElapsed(seconds: Long): String =
     if (seconds < 3600) {
-        "%02d:%02d".format(seconds / 60, seconds % 60)
+        formatMinutesSeconds(seconds)
     } else {
         "%dh %02dm".format(seconds / 3600, (seconds % 3600) / 60)
     }
@@ -583,7 +584,7 @@ private fun formatElapsed(seconds: Long): String =
  */
 private fun formatMoment(seconds: Long): String =
     if (seconds < 3600) {
-        "%02d:%02d".format(seconds / 60, seconds % 60)
+        formatMinutesSeconds(seconds)
     } else {
         "%d:%02d:%02d".format(seconds / 3600, (seconds % 3600) / 60, seconds % 60)
     }

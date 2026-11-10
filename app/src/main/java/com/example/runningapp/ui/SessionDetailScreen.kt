@@ -32,6 +32,7 @@ import com.example.runningapp.ranAt
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.data.bandedOnHrProfile
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.analysis.formatMinutesSeconds
 import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
@@ -905,11 +906,7 @@ private fun formatDurationLarge(seconds: Long): String {
     return if (h > 0) "%dh %dm".format(h, m) else "%dm %ds".format(m, s)
 }
 
-private fun formatMinutesSeconds(seconds: Int): String {
-    val mins = seconds / 60
-    val secs = seconds % 60
-    return "%02d:%02d".format(mins, secs)
-}
+private fun formatMinutesSeconds(seconds: Int): String = formatMinutesSeconds(seconds.toLong())
 
 private fun formatWeatherLine(session: RunnerSession): String {
     val tempC = session.weatherTempC ?: return ""
