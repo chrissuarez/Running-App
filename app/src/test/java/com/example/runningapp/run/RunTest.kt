@@ -799,7 +799,7 @@ class RunPhaseTest {
 
         val effects = driver.advance(60)
 
-        assertTrue(effects.spoken().contains("Starting main workout"))
+        assertTrue(effects.spoken().contains("Starting main workout. Zone 2."))
         assertEquals(RunPhase.MAIN, driver.state.phase)
         assertEquals(0L, driver.state.phaseSecondsElapsed)
         assertEquals(60L, driver.state.secondsRunning)
@@ -815,7 +815,7 @@ class RunPhaseTest {
         assertEquals(
             listOf(
                 "10 seconds of warm up remaining",
-                "Starting main workout",
+                "Starting main workout. Zone 2.",
                 "Start running, interval 1 of 6.",
             ),
             effects.spoken(),

@@ -201,7 +201,7 @@ class RunIntervalSequenceTest {
 
         assertEquals(
             listOf(
-                "Starting main workout",
+                "Starting main workout. Zone 2.",
                 "Start running, interval 1 of 2.",
                 "Transition to walking, 2 seconds.",
                 "Start running, interval 2 of 2.",
