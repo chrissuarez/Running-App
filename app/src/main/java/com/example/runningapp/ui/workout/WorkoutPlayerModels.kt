@@ -15,6 +15,7 @@ import com.example.runningapp.hrZoneOf
 import com.example.runningapp.liveZoneStatus
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.zoneBandOf
+import com.example.runningapp.analysis.formatMinutesSeconds
 
 const val CUE_REASON_PLANNED = "planned_transition"
 const val CUE_REASON_HR_HIGH = "hr_too_high"
@@ -140,7 +141,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val cue = mapCoachCueUiState(state)
 
     val secondary = mutableListOf(
-        "Elapsed" to formatStopwatch(state.secondsRunning)
+        "Elapsed" to formatMinutesSeconds(state.secondsRunning)
     )
     // The run's pinned mode, not the live setting: the settings write from a just-tapped mode
     // toggle is async, and an outdoor run started right after the tap must still show
@@ -154,13 +155,13 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
 
     return WorkoutPlayerUiState(
         phaseLabel = phaseLabel,
-        countdownText = formatStopwatch(countdownSeconds.toLong()),
+        countdownText = formatMinutesSeconds(countdownSeconds.toLong()),
         intervalLabel = intervalLabel,
         progressLabel = "${progressPercent}%",
         progressFraction = progressFraction,
         nextLabel = state.nextIntervalType?.let { next ->
             if (state.nextIntervalDurationSeconds > 0) {
-                "Next: $next ${formatStopwatch(state.nextIntervalDurationSeconds.toLong())}"
+                "Next: $next ${formatMinutesSeconds(state.nextIntervalDurationSeconds.toLong())}"
             } else {
                 "Next: $next"
             }
@@ -261,13 +262,6 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
     }
 
     return CoachCueUiState(message = message, reasonTag = reasonTag, severity = severity)
-}
-
-fun formatStopwatch(seconds: Long): String {
-    val clamped = seconds.coerceAtLeast(0)
-    val mins = clamped / 60
-    val secs = clamped % 60
-    return "%02d:%02d".format(mins, secs)
 }
 
 fun formatPace(paceMinPerKm: Double): String = "${formatMinutesPerKm(paceMinPerKm)} /km"

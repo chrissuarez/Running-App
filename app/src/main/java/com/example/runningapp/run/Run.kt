@@ -9,6 +9,7 @@ import com.example.runningapp.bandWithHysteresis
 import com.example.runningapp.coachingCue
 import com.example.runningapp.highCueCondition
 import com.example.runningapp.hrZoneOf
+import com.example.runningapp.analysis.formatMinutesSeconds
 
 /**
  * What the coach says at the halfway point of an outdoor Run following a Workout (#208).
@@ -984,20 +985,15 @@ object Run {
         if (intervals != null && intervals.totalRepeats > 0) {
             return "Int ${intervals.repeat}/${intervals.totalRepeats} • " +
                 "${intervals.kind.notificationName} • " +
-                "${formatTime(intervals.secondsRemaining.coerceAtLeast(0).toLong())} left"
+                "${formatMinutesSeconds(intervals.secondsRemaining.coerceAtLeast(0).toLong())} left"
         }
         return phaseNotificationText(state)
     }
 
     private fun phaseNotificationText(state: RunState): String =
         if (state.phase == RunPhase.MAIN) {
-            "${state.phase.notificationName} elapsed ${formatTime(state.phaseSecondsElapsed)}"
+            "${state.phase.notificationName} elapsed ${formatMinutesSeconds(state.phaseSecondsElapsed)}"
         } else {
-            "${state.phase.notificationName} • ${formatTime(state.phaseSecondsRemaining.toLong())} left"
+            "${state.phase.notificationName} • ${formatMinutesSeconds(state.phaseSecondsRemaining.toLong())} left"
         }
-
-    private fun formatTime(seconds: Long): String {
-        val safe = seconds.coerceAtLeast(0)
-        return "%02d:%02d".format(safe / 60, safe % 60)
-    }
 }

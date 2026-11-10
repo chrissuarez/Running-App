@@ -153,13 +153,6 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
-    fun `formatStopwatch handles negative and regular values`() {
-        assertEquals("00:00", formatStopwatch(-4))
-        assertEquals("00:09", formatStopwatch(9))
-        assertEquals("02:05", formatStopwatch(125))
-    }
-
-    @Test
     fun `mapIntervalTimelineUiState includes planned and hr markers`() {
         val state = HrState(
             currentPhase = SessionPhase.MAIN,
