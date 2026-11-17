@@ -224,17 +224,19 @@ fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<
         .sortedBy { it.startedAtMillis }
         .map { row ->
             val place = placesBySegment[row.segmentId]?.get(row.effortId)
+            // Rounded once, so the label on screen and the seconds the summary is told can never disagree.
+            val seconds = row.elapsedMillis.roundedToSeconds()
             RunSegmentEffortUi(
                 effortId = row.effortId,
                 segmentId = row.segmentId,
                 segmentName = row.segmentName,
-                timeLabel = formatDuration(row.elapsedMillis.roundedToSeconds()),
+                timeLabel = formatDuration(seconds),
                 paceLabel = segmentPaceLabel(row.elapsedMillis, row.distanceMeters),
                 // Off the enum itself, the way the record book decides how deep it goes
                 // ([com.example.runningapp.analysis.Medal]): a list of three written out here
                 // would be a second answer to "how many places are worth a medal".
                 medal = place?.let { Medal.entries.getOrNull(it) },
-                timeSeconds = row.elapsedMillis.roundedToSeconds(),
+                timeSeconds = seconds,
             )
         }
 }
