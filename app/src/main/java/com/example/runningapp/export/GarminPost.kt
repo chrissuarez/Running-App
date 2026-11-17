@@ -48,8 +48,16 @@ object GarminWebPage {
      */
     private val inAppDomains = listOf("garmin.com", "google.com", "apple.com")
 
+    /**
+     * Schemes a page makes for itself rather than goes to — a blank frame, an inline document, a
+     * generated file. Sent to the browser they would pop up an empty tab in the middle of a sign-in.
+     */
+    private val pageLocalSchemes = setOf("about", "data", "blob")
+
     /** Whether a top-level navigation to [url] stays inside the app. Only https is kept. */
     fun staysInApp(url: String): Boolean {
+        val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
+        if (scheme in pageLocalSchemes) return true
         val uri = runCatching { URI(url) }.getOrNull() ?: return false
         if (!uri.scheme.equals("https", ignoreCase = true)) return false
         val host = uri.host?.lowercase() ?: return false

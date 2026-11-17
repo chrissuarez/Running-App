@@ -197,15 +197,16 @@ class SessionDetailViewModel(
      * The page calls this with its watched row every time the row changes, so a treadmill Run
      * whose distance is saved a moment after the page opened is asked then, with the distance in
      * the file. Repeated calls are harmless: the ledger is read each time, and a question already
-     * up is left alone.
+     * up for this Run is left alone.
+     *
+     * A question left unanswered on another Run's page — the runner went Back past it — gives way
+     * to this one. That Run was never marked asked, so its own page asks again if it is still fresh.
      */
     fun considerGarminPost(run: RunnerSession) {
         val ledger = garminPostLedger ?: return
-        if (_garminPostOffer.value != null) return
+        if (_garminPostOffer.value == run.id) return
         viewModelScope.launch {
-            if (GarminPostOffer.shouldAsk(run, ledger.askedThroughRunId(), clock()) &&
-                _garminPostOffer.value == null
-            ) {
+            if (GarminPostOffer.shouldAsk(run, ledger.askedThroughRunId(), clock())) {
                 _garminPostOffer.value = run.id
             }
         }

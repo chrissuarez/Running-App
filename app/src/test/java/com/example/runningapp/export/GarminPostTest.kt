@@ -91,6 +91,9 @@ class GarminPostTest {
             "https://garmin.com/",
             "https://accounts.google.com/o/oauth2/auth",
             "https://appleid.apple.com/auth/authorize",
+            "about:blank",
+            "data:text/html,<p>hi</p>",
+            "blob:https://connect.garmin.com/1234",
         ).forEach { assertTrue(it, GarminWebPage.staysInApp(it)) }
     }
 

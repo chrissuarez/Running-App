@@ -154,6 +154,17 @@ class SessionDetailViewModelGarminPostTest {
     }
 
     @Test
+    fun `a question left unanswered on another Run gives way to this one`() = runTest(dispatcher) {
+        val vm = viewModel(FakeLedger())
+        vm.considerGarminPost(run().copy(id = 6L))
+        advanceUntilIdle()
+        assertEquals(6L, vm.garminPostOffer.value)
+        vm.considerGarminPost(run())
+        advanceUntilIdle()
+        assertEquals(7L, vm.garminPostOffer.value)
+    }
+
+    @Test
     fun `with nowhere to remember the answer, nothing asks`() = runTest(dispatcher) {
         val vm = viewModel(ledger = null)
         vm.considerGarminPost(run())
