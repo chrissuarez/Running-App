@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -273,6 +274,9 @@ class SessionDetailViewModel(
      */
     private val autoRequested = mutableSetOf<Long>()
 
+    /** Treadmill Runs whose runner chose a summary with no distance in it (#543). */
+    private val _summaryWithoutDistance = MutableStateFlow<Set<Long>>(emptySet())
+
     /**
      * The runner has turned AI sharing back on (or Testing mode off), so every refusal standing is
      * asked over again (#76).
@@ -355,8 +359,36 @@ class SessionDetailViewModel(
         if (!autoRequested.add(sessionId)) return
         viewModelScope.launch {
             if (sessionRepository.runSummaryWritten(sessionId)) return@launch
+            // A treadmill Run waits here for its distance (#543), after the written check so a Run
+            // that already has words never even shows the wait. The wait is inside the one launched
+            // ask rather than a gate on the page, so the page's repeated calls stay no-ops and the
+            // distance being saved — or the runner choosing to go without — is all it takes.
+            runSummaryWaitingForDistance(sessionId).first { !it }
             askForRunSummary(sessionId)
         }
+    }
+
+    /**
+     * Whether the summary is being held for a treadmill Run's distance (#543).
+     *
+     * Ends when a Stated Distance is saved, or when the runner has chosen to go without one
+     * ([writeSummaryWithoutDistance]).
+     */
+    fun runSummaryWaitingForDistance(sessionId: Long): Flow<Boolean> = combine(
+        sessionRepository.runSummaryAwaitsDistanceFlow(sessionId),
+        _summaryWithoutDistance,
+    ) { awaiting, skipped -> awaiting && sessionId !in skipped }.distinctUntilChanged()
+
+    /**
+     * The runner's "write it without a distance": ends the wait and lets the held ask go.
+     *
+     * Remembered for this ViewModel's life, so leaving the page and coming back does not put the
+     * wait back up. It is not stored, deliberately: a later open of a still-distance-less Run, in a
+     * new session of the app, is a fresh chance to state the distance first — but only for a Run
+     * with no words yet, since a written Run is never waited on.
+     */
+    fun writeSummaryWithoutDistance(sessionId: Long) {
+        _summaryWithoutDistance.update { it + sessionId }
     }
 
     /**

@@ -2833,6 +2833,23 @@ class SessionRepository(
     }.distinctUntilChanged()
 
     /**
+     * Whether this Run is a treadmill Run that has not been told how far it went (#543).
+     *
+     * A treadmill has no track to measure, so its distance is the one number only the runner can
+     * supply — and the summary names it. The page opens a few seconds before the runner has typed
+     * it, so a summary asked for on open is written without it and kept for ever. This is the
+     * "not yet" the ask waits on; saving a Stated Distance ([stateDistance]) is what ends it, with
+     * no signal of its own, because the distance is read straight off the Run.
+     *
+     * False for a Run that is gone: there is nothing to wait for, and the ask's own refusal for a
+     * missing Run is the right answer.
+     */
+    fun runSummaryAwaitsDistanceFlow(sessionId: Long): Flow<Boolean> =
+        sessionDao.getSessionByIdFlow(sessionId)
+            .map { it != null && it.isTreadmill() && it.distanceKm <= 0.0 }
+            .distinctUntilChanged()
+
+    /**
      * Asks the model for a Run's summary and keeps what it says (#76).
      *
      * The prompt is built by the caller and is a pure function of stored facts
