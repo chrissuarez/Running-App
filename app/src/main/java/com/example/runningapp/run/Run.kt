@@ -311,6 +311,11 @@ object Run {
                 val end = finish(current, previousTickMillis + i * 1000)
                 current = end.state
                 effects += end.effects
+                // Said last, behind the stop effects, and on purpose: the service's ReleaseStrap
+                // sweeps every cue still waiting as belonging to a Run that is over, so a line
+                // emitted ahead of it would be taken back unspoken. Behind it, nothing sweeps it.
+                // Only this natural end says it — a Stop or a skip goes through `finish` alone.
+                effects += RunEffect.Speak("Cool down complete. Run finished.", CuePriority.INSTRUCTION)
                 ended = true
                 break
             }

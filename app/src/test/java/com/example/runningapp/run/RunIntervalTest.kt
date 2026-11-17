@@ -188,7 +188,9 @@ class RunIntervalSequenceTest {
         val effects = driver.advance(60)
 
         assertNull(driver.state.intervals)
-        assertEquals(emptyList<String>(), effects.spoken())
+        // The five-second cool-down runs out inside this minute, so the one thing said is that it
+        // did. No Interval cue — the workout did not begin again.
+        assertEquals(listOf("Cool down complete. Run finished."), effects.spoken())
         assertEquals(0, effects.count<RunEffect.SaveIntervalStat>())
     }
 

@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.CuePriority
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
@@ -909,6 +910,61 @@ class RunPhaseTest {
 
         assertEquals(1, effects.count<RunEffect.FinalizeRun>())
         assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `the cool down completing says so, after the strap is let go`() {
+        // After, not before: ReleaseStrap sweeps every cue still waiting, so a line emitted ahead
+        // of it is taken back unspoken. Behind it, nothing sweeps it and the queue speaks it.
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+
+        val effects = driver.advance(30)
+
+        val line = effects.indexOfFirst {
+            it is RunEffect.Speak && it.text == "Cool down complete. Run finished."
+        }
+        assertTrue(line >= 0)
+        assertEquals(CuePriority.INSTRUCTION, (effects[line] as RunEffect.Speak).priority)
+        assertTrue(line > effects.indexOfFirst { it is RunEffect.ReleaseStrap })
+        assertEquals(1, effects.spoken().count { it == "Cool down complete. Run finished." })
+    }
+
+    @Test
+    fun `a stop in the cool down does not say the cool down is complete`() {
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+        driver.advance(5)
+
+        val effects = driver.stop()
+
+        assertTrue(effects.spoken().none { it.contains("Cool down complete") })
+    }
+
+    @Test
+    fun `skipping the cool down does not say the cool down is complete`() {
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+
+        val effects = driver.skipPhase()
+
+        assertTrue(effects.spoken().none { it.contains("Cool down complete") })
+    }
+
+    @Test
+    fun `a run with no workout never says the cool down is complete`() {
+        val driver = Driver()
+        driver.start(config(workout = null))
+
+        val effects = driver.advance(120) + driver.stop()
+
+        assertTrue(effects.spoken().none { it.contains("Cool down complete") })
     }
 
     @Test
