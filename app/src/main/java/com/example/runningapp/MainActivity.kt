@@ -1012,11 +1012,7 @@ class MainActivity : ComponentActivity() {
                             }
                             // Held for a treadmill Run's distance (#543): the ask above waits inside the
                             // view model, and this is only so the card can say so.
-                            val summaryWaitingForDistance by produceState(initialValue = false, key1 = sessionId) {
-                                sessionId?.let { id ->
-                                    sessionDetailViewModel.runSummaryWaitingForDistance(id).collect { value = it }
-                                }
-                            }
+                            val summaryHeld by sessionDetailViewModel.summaryHeld.collectAsState()
                             val summaryUi = sessionId?.let { id ->
                                 RunSummaryUi(
                                     text = sessionSummaryRow?.text,
@@ -1027,7 +1023,7 @@ class MainActivity : ComponentActivity() {
                                     // again" writes words that are kept just as long (#76).
                                     factsSettled = summaryFactsSettled,
                                     sharingAllowed = summariesAllowed,
-                                    waitingForDistance = summaryWaitingForDistance,
+                                    waitingForDistance = id in summaryHeld,
                                 )
                             }
 
