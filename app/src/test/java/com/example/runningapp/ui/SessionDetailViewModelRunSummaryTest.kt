@@ -5,6 +5,7 @@ import com.example.runningapp.UserSettings
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.repositoryWithRecordBook
+import com.example.runningapp.run.RunMode
 import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.AchievementDao
 import com.example.runningapp.data.AiCoachClient
@@ -70,7 +71,7 @@ class SessionDetailViewModelRunSummaryTest {
         segmentsTimed = true,
         // Outdoors, because a Run's mode defaults to treadmill and a treadmill Run with no distance
         // is held for it (#543) — which is not what these cases are about.
-        runMode = com.example.runningapp.run.RunMode.OUTDOOR.settingValue,
+        runMode = RunMode.OUTDOOR.settingValue,
     )
 
     /** The second Run, for the case where two of them are in play at once. */
@@ -580,7 +581,7 @@ class SessionDetailViewModelRunSummaryTest {
 
     // --- A treadmill Run waits for its distance (#543) ---
 
-    private val treadmillRun = finishedRun.copy(runMode = com.example.runningapp.run.RunMode.TREADMILL.settingValue)
+    private val treadmillRun = finishedRun.copy(runMode = RunMode.TREADMILL.settingValue)
 
     /** A viewModel over Run 7 as the given watched row, so a test can state a distance mid-wait. */
     private fun viewModelOverRun(run: MutableStateFlow<RunnerSession>, client: AiCoachClient) =
@@ -692,6 +693,19 @@ class SessionDetailViewModelRunSummaryTest {
         advanceUntilIdle()
 
         verify(client, never()).summariseRun(any())
+    }
+
+    @Test
+    fun `with sharing off a treadmill run with no distance is refused, not held`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelWatching(MutableStateFlow(false), client, session = treadmillRun)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+        assertFalse(viewModel.runSummaryWaitingForDistance(7).first())
     }
 
     @Test
