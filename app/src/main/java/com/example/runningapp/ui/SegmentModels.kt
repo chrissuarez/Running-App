@@ -189,6 +189,8 @@ data class RunSegmentEffortUi(
     val timeLabel: String,
     val paceLabel: String,
     val medal: Medal?,
+    /** The same time as [timeLabel], for the AI prompt, which writes it with units (#547). */
+    val timeSeconds: Long,
 )
 
 /**
@@ -232,6 +234,7 @@ fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<
                 // ([com.example.runningapp.analysis.Medal]): a list of three written out here
                 // would be a second answer to "how many places are worth a medal".
                 medal = place?.let { Medal.entries.getOrNull(it) },
+                timeSeconds = row.elapsedMillis.roundedToSeconds(),
             )
         }
 }

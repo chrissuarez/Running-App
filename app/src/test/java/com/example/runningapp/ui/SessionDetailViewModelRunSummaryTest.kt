@@ -154,7 +154,7 @@ class SessionDetailViewModelRunSummaryTest {
 
         val sent = argumentCaptor<String>()
         verify(client).summariseRun(sent.capture())
-        assertTrue(sent.firstValue.contains("Gold at Fastest 5 km (24:31)"))
+        assertTrue(sent.firstValue.contains("Gold at Fastest 5 km (24 minutes 31 seconds)"))
     }
 
     @Test
