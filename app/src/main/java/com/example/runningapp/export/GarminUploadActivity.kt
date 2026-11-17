@@ -121,6 +121,7 @@ class GarminUploadActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        (webView.parent as? android.view.ViewGroup)?.removeView(webView)
         webView.destroy()
         super.onDestroy()
     }
