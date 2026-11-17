@@ -247,6 +247,8 @@ internal object PreferencesKeys {
     val FLOATING_COACH_ENABLED = booleanPreferencesKey("floating_coach_enabled")
     val FLOATING_COACH_X = intPreferencesKey("floating_coach_x")
     val FLOATING_COACH_Y = intPreferencesKey("floating_coach_y")
+    // The highest Run id already asked "Post this run to Garmin?" (#544). See GarminPostOffer.
+    val GARMIN_POST_ASKED_THROUGH = longPreferencesKey("garmin_post_asked_through")
 }
 
 /** [maxHrEverSet], read from storage. */
@@ -1189,6 +1191,18 @@ class SettingsRepository(private val context: Context) {
      * is a separate question, and one the new folder answers only from the next backup on.
      */
     suspend fun setBackupFolderUri(uri: String) = put(PreferencesKeys.BACKUP_FOLDER_URI, uri)
+
+    /** The highest Run id already asked "Post this run to Garmin?" (#544), or 0. */
+    suspend fun garminPostAskedThrough(): Long =
+        context.dataStore.data.first()[PreferencesKeys.GARMIN_POST_ASKED_THROUGH] ?: 0L
+
+    /** Moves the Garmin-post watermark up to [runId] (#544); never down. */
+    suspend fun markGarminPostAsked(runId: Long) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.GARMIN_POST_ASKED_THROUGH] ?: 0L
+            if (runId > current) preferences[PreferencesKeys.GARMIN_POST_ASKED_THROUGH] = runId
+        }
+    }
 
     /** Written only once a complete archive has been promoted into place. See [Archiver]. */
     suspend fun setLastBackupAt(atEpochMillis: Long) = put(PreferencesKeys.LAST_BACKUP_AT, atEpochMillis)

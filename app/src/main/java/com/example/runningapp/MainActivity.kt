@@ -46,6 +46,7 @@ import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.export.GARMIN_IMPORT_URL
+import com.example.runningapp.export.GarminUploadActivity
 import com.example.runningapp.export.exportShareChooser
 import com.example.runningapp.navigation.NavControllerPageStack
 import com.example.runningapp.navigation.Routes
@@ -378,6 +379,7 @@ class MainActivity : ComponentActivity() {
                             // runner's own name for it rather than "this route" (#74).
                             savedCourses = appContainer.savedCourseShapes,
                             downloadsFileStore = appContainer.downloadsFileStore,
+                            garminPostLedger = appContainer.garminPostLedger,
                             // Watched, not read once: a refusal that was only ever the switch's
                             // doing must stop being a refusal the moment the runner moves the
                             // switch back (#76).
@@ -1096,6 +1098,50 @@ class MainActivity : ComponentActivity() {
                                         Toast.LENGTH_LONG
                                     ).show()
                                     sessionDetailViewModel.garminImportHandled()
+                                }
+                            }
+
+                            // "Post this run to Garmin?" (#544), asked once per Run, the first time
+                            // its page opens after the Run. Keyed on the watched row, so a treadmill
+                            // Run is asked once its distance is saved, not before — the file then
+                            // holds it.
+                            LaunchedEffect(selectedSession) {
+                                selectedSession?.let { sessionDetailViewModel.considerGarminPost(it) }
+                            }
+                            val garminPostOffer by sessionDetailViewModel.garminPostOffer.collectAsState()
+                            garminPostOffer?.takeIf { it == sessionId }?.let { offeredRun ->
+                                AlertDialog(
+                                    // Tapping outside is a No: either way it is not asked again, and
+                                    // the Garmin button further down still sends it.
+                                    onDismissRequest = {
+                                        sessionDetailViewModel.answerGarminPost(offeredRun, post = false)
+                                    },
+                                    title = { Text("Post this run to Garmin?") },
+                                    text = {
+                                        Text(
+                                            "Opens Garmin Connect here in the app with this run's " +
+                                                "file ready to upload."
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = {
+                                            sessionDetailViewModel.answerGarminPost(offeredRun, post = true)
+                                        }) { Text("Yes") }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = {
+                                            sessionDetailViewModel.answerGarminPost(offeredRun, post = false)
+                                        }) { Text("No") }
+                                    },
+                                )
+                            }
+                            // The file is written by the time this fires. Gated on the Run that asked
+                            // and handled on the spot, for the reasons the Downloads hand-off above is.
+                            val garminUploadReady by sessionDetailViewModel.garminUploadReady.collectAsState()
+                            LaunchedEffect(garminUploadReady, sessionId) {
+                                garminUploadReady?.takeIf { it.sessionId == sessionId }?.let { ready ->
+                                    startActivity(GarminUploadActivity.intent(this@MainActivity, ready.uri))
+                                    sessionDetailViewModel.garminUploadHandled()
                                 }
                             }
 

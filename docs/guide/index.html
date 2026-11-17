@@ -179,6 +179,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>After a run, the app offers to post it to Garmin for you.</strong> The first time you open a run&rsquo;s page after the run, it asks <em>&ldquo;Post this run to Garmin?&rdquo;</em>. Tap <strong>Yes</strong> and Garmin Connect&rsquo;s import page opens inside the app. Tap its upload box and the run&rsquo;s file is already in it: no hunting through Downloads. You sign in to Garmin the first time, and the app keeps you signed in after that. Tap <strong>No</strong> and nothing happens; <strong>Send to Garmin</strong> in the share menu still works. A treadmill run waits until you have typed its distance, so the file Garmin gets has it. Each run asks only once. See <em>Posting the run to Garmin</em> in <a href="#history">History</a>.</p>
       <p><strong>The coach now tells you when the cool-down is over.</strong> When the cool-down runs out and the run ends by itself, the coach says <em>&ldquo;Cool down complete. Run finished.&rdquo;</em> out loud, so you are not left wondering whether it stopped. It stays quiet if you press Stop yourself or skip the cool-down, and a run with no plan has no cool-down to finish. See <em>When the app speaks, and when it doesn&rsquo;t</em> in <a href="#during">during a run</a>.</p>
       <p><strong>A floating coach can now sit over Netflix while you run.</strong> Turn on <strong>Floating coach</strong> in Prefs and, during a run, a small see-through box floats over whatever else is on the screen: your heart rate, a dial showing where it sits in your target zone, and what comes next and when (&ldquo;Walk in 00:45&rdquo;). Drag it out of the way of the subtitles, tap it to come back to the app. It hides itself while the app is open. The first time, the phone asks you to allow <em>Display over other apps</em>. See <em>The floating coach, over Netflix</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A treadmill run now waits for your distance before its summary is written.</strong> The summary used to be written the moment you opened the run, a few seconds before you had typed how far you went &mdash; and it is kept for ever, so it never mentioned the distance. Now, on a treadmill run with no distance yet, the card says it is waiting for the distance. Type it in and the summary is written with it. Or tap <strong>Write it without a distance</strong> if you would rather not. See <em>This run &mdash; the written summary</em> in <a href="#history">History</a>.</p>
@@ -655,6 +656,20 @@
         <p class="note"><b>Garmin's phone app cannot take an activity in.</b> Opening a file with it offers to make the file a <em>course</em> instead. Upload the <span class="mono">.fit</span> on Garmin Connect's website.</p>
         <p><strong>Send to Garmin</strong> does that for you. It saves the <span class="mono">.fit</span> into your phone&rsquo;s <strong>Downloads</strong> folder, opens Garmin Connect&rsquo;s import page in your browser, and a short message on screen names the file to pick. You may need to sign in to Garmin there. Sending the same run again replaces its file rather than adding another.</p>
         <div class="where"><b>Where</b> the share icon, top right &mdash; <em>Send to Garmin</em> is in the same menu</div>
+      </div>
+
+      <div class="e">
+        <h3>Posting the run to Garmin</h3>
+        <p>The first time you open a run&rsquo;s page after the run, the app asks <em>&ldquo;Post this run to Garmin?&rdquo;</em>.</p>
+        <ul class="plain">
+          <li><strong>Yes</strong> opens Garmin Connect&rsquo;s import page <em>inside the app</em>. Tap the page&rsquo;s upload box and this run&rsquo;s file goes straight in &mdash; no file picker, nothing to find. Then press Garmin&rsquo;s own import button.</li>
+          <li>The first time, Garmin asks you to sign in. The app remembers it, so the next run is two taps: <strong>Yes</strong>, then the upload box.</li>
+          <li><strong>No</strong>, or tapping outside the box, does nothing. <strong>Send to Garmin</strong> in the share menu still works whenever you want it.</li>
+          <li>Back steps back through Garmin&rsquo;s pages, then returns you to the run.</li>
+        </ul>
+        <p class="note"><b>Each run asks once, and only soon after.</b> Answer either way and that run never asks again. A run older than a day, opened from History, does not ask. A treadmill run asks only once you have typed its distance, so the file Garmin gets has it.</p>
+        <p class="note"><b>Links that lead away from Garmin open in your browser,</b> not inside the app.</p>
+        <div class="where"><b>Where</b> a run&rsquo;s own page, the first time you open it after the run</div>
       </div>
 
       <div class="e">
@@ -1255,7 +1270,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>17 November 2026</strong>. The coach now says when the cool-down is over and the run has ended by itself. A floating coach can also sit over other apps during a run, so you can watch something full screen and still see your heart rate. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>17 November 2026</strong>. After a run, the app now offers to post it to Garmin, with the file already in Garmin&rsquo;s upload box. The coach now says when the cool-down is over and the run has ended by itself. A floating coach can also sit over other apps during a run, so you can watch something full screen and still see your heart rate. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>

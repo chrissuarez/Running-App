@@ -2847,7 +2847,7 @@ class SessionRepository(
      */
     fun runSummaryAwaitsDistanceFlow(sessionId: Long): Flow<Boolean> =
         sessionDao.getSessionByIdFlow(sessionId)
-            .map { it != null && it.isTreadmill() && it.distanceKm <= 0.0 }
+            .map { it != null && it.awaitsStatedDistance() }
             .distinctUntilChanged()
 
     /**

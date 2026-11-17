@@ -24,6 +24,7 @@ import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.DownloadsFileStore
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.FileProviderExportFileStore
+import com.example.runningapp.export.GarminPostLedger
 import com.example.runningapp.export.MediaStoreDownloadsFileStore
 import com.example.runningapp.restore.PendingRestore
 import com.example.runningapp.restore.migrationHrProfile
@@ -167,6 +168,14 @@ class AppContainer(context: Context) {
 
     val exportFileStore: ExportFileStore by lazy {
         FileProviderExportFileStore(appContext)
+    }
+
+    /** Which Runs have already been asked "Post this run to Garmin?" (#544). */
+    val garminPostLedger: GarminPostLedger by lazy {
+        object : GarminPostLedger {
+            override suspend fun askedThroughRunId() = settingsRepository.garminPostAskedThrough()
+            override suspend fun markAsked(runId: Long) = settingsRepository.markGarminPostAsked(runId)
+        }
     }
 
     /** Where "Send to Garmin" leaves the run's file (#217). */

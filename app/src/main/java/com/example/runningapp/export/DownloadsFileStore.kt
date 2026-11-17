@@ -125,3 +125,6 @@ const val GARMIN_IMPORT_URL = "https://connect.garmin.com/app/import-data"
 
 /** A FIT file waiting in Downloads for the runner to pick on Garmin's page. */
 data class GarminImportFile(val sessionId: Long, val fileName: String)
+
+/** A Run's FIT file in the app's own files, ready for the in-app Garmin page to upload (#544). */
+data class GarminUploadFile(val sessionId: Long, val uri: Uri)

@@ -47,6 +47,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Garmin Connect's import page inside the app, with the Run's file handed to its upload
+             box (#544). Not exported: only the app opens it, with its own file. -->
+        <activity
+            android:name=".export.GarminUploadActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.RunningApp" />
+
         <!-- Owns the .gpx "Open with" filters so MainActivity never does (#277). Invisible, kept
              out of recents, and gone the moment it has handed the file on; the rule it exists for is
              stated on RouteFileLaunch.

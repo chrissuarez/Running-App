@@ -538,6 +538,15 @@ fun RunnerSession.isFinished(): Boolean = endTime > 0
  */
 fun RunnerSession.isTreadmill(): Boolean = RunMode.ofSettingValue(runMode) == RunMode.TREADMILL
 
+/**
+ * Whether this is a treadmill Run that has not been told how far it went (#543, #544).
+ *
+ * A treadmill has no track to measure, so its distance is the one number only the runner can
+ * supply. Anything written out of the Run as soon as its page opens — the summary, the file posted
+ * to Garmin — waits on this, or it goes out without the distance the runner types a moment later.
+ */
+fun RunnerSession.awaitsStatedDistance(): Boolean = isTreadmill() && distanceKm <= 0.0
+
 /** The five zone columns, reachable by zone rather than by name. */
 fun RunnerSession.secondsInZone(zone: HrZone): Long = when (zone) {
     HrZone.ENDURANCE -> zone1Seconds
