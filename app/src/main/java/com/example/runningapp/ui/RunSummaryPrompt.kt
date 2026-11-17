@@ -101,10 +101,10 @@ fun runSummaryFacts(
     return RunSummaryFacts(
         kind = kind,
         dateLabel = RUN_SUMMARY_DATE_FORMAT.format(session.ranOn(zone)),
-        durationLabel = formatDuration(session.durationSeconds),
+        durationLabel = spokenDuration(session.durationSeconds),
         movingTimeLabel = movingTime
             ?.takeIf { it > 0 && it != session.durationSeconds }
-            ?.let { formatDuration(it) },
+            ?.let { spokenDuration(it) },
         distanceLabel = session.distanceKm
             .takeIf { it > 0.0 }
             ?.let { String.format(Locale.UK, "%.2f km", it) },
@@ -119,7 +119,7 @@ fun runSummaryFacts(
             .map { "${it.medal.spoken} at ${it.type.label} (${recordValueLabel(it.type, it.value)})" },
         segments = segmentEfforts.map { effort ->
             val placing = effort.medal?.let { ", ${it.spoken} there" }.orEmpty()
-            "${effort.segmentName} in ${effort.timeLabel} at ${effort.paceLabel}$placing"
+            "${effort.segmentName} in ${spokenDuration(effort.timeSeconds)} at ${effort.paceLabel}$placing"
         },
         matched = matched?.let(::matchedRunsFacts),
     )
@@ -242,9 +242,25 @@ private val Medal.spoken: String
         Medal.BRONZE -> "Bronze"
     }
 
+/**
+ * A length of time with its units written out: `37 seconds`, `25 minutes 30 seconds`, `1 hour 5 minutes`.
+ *
+ * The screen's `0:37` is read by a person who can see it is a clock; the model read the same text as
+ * "37-minute" (#547), because `m:ss` and `h:mm` look alike once the label is gone. Words cannot be
+ * misread that way. Zero parts are left out (`30 minutes`, not `30 minutes 0 seconds`) except for a
+ * time that is nothing at all. Prompt only — the on-screen formats stay as they are.
+ */
+internal fun spokenDuration(seconds: Long): String {
+    val safe = seconds.coerceAtLeast(0)
+    val parts = listOf(safe / 3600 to "hour", (safe % 3600) / 60 to "minute", safe % 60 to "second")
+        .filter { (n, _) -> n > 0 }
+        .map { (n, unit) -> "$n $unit" + if (n == 1L) "" else "s" }
+    return parts.joinToString(" ").ifEmpty { "0 seconds" }
+}
+
 /** A record's stored value in the unit that record is kept in. */
 private fun recordValueLabel(type: RecordType, value: Double): String = when (type.unit) {
-    RecordUnit.SECONDS -> formatDuration(value.roundToInt().toLong())
+    RecordUnit.SECONDS -> spokenDuration(value.roundToInt().toLong())
     RecordUnit.METERS -> String.format(Locale.UK, "%.2f km", value / 1000.0)
 }
 

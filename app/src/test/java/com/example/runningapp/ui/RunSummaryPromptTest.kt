@@ -83,7 +83,7 @@ class RunSummaryPromptTest {
 
         assertEquals("Run", facts.kind)
         assertEquals("Wednesday 12 August 2026", facts.dateLabel)
-        assertEquals("27:30", facts.durationLabel)
+        assertEquals("27 minutes 30 seconds", facts.durationLabel)
         assertEquals("5.00 km", facts.distanceLabel)
         assertEquals("5:30 /km", facts.paceLabel)
         assertEquals(152, facts.avgBpm)
@@ -124,9 +124,47 @@ class RunSummaryPromptTest {
     fun `moving time is sent only where it differs from the clock`() {
         assertNull(runSummaryFacts(run(movingTimeSeconds = 1_650), zone = london).movingTimeLabel)
         assertEquals(
-            "26:00",
+            "26 minutes",
             runSummaryFacts(run(movingTimeSeconds = 1_560), zone = london).movingTimeLabel,
         )
+    }
+
+    @Test
+    fun `a time under a minute is in seconds, not a clock that reads as minutes`() {
+        // 0:37 was read by the model as a 37-minute run (#547).
+        assertEquals("37 seconds", runSummaryFacts(run(durationSeconds = 37), zone = london).durationLabel)
+        assertEquals("1 second", spokenDuration(1))
+        assertEquals("0 seconds", spokenDuration(0))
+    }
+
+    @Test
+    fun `a time under an hour is minutes and seconds with singular and plural right`() {
+        assertEquals("1 minute 1 second", spokenDuration(61))
+        assertEquals("25 minutes 30 seconds", spokenDuration(1_530))
+    }
+
+    @Test
+    fun `a time over an hour carries hours and leaves out parts that are zero`() {
+        assertEquals("1 hour 5 minutes 3 seconds", spokenDuration(3_903))
+        assertEquals("2 hours", spokenDuration(7_200))
+        val facts = runSummaryFacts(run(durationSeconds = 3_900), zone = london)
+        assertEquals("1 hour 5 minutes", facts.durationLabel)
+    }
+
+    @Test
+    fun `a seconds record is written with units in the prompt`() {
+        // FASTEST_5K 1_471 s: the clock form 24:31 is exactly what could be misread.
+        val prompt = buildRunSummaryPrompt(
+            runSummaryFacts(
+                run(),
+                achievements = listOf(
+                    Achievement(sessionId = 7, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_471.0)
+                ),
+                zone = london,
+            )
+        )
+        assertTrue(prompt, prompt.contains("24 minutes 31 seconds"))
+        assertFalse(prompt, prompt.contains("24:31"))
     }
 
     /**
@@ -156,7 +194,7 @@ class RunSummaryPromptTest {
 
         // In the book's own order, not the order the rows happened to arrive in.
         assertEquals(
-            listOf("Gold at Fastest 5 km (24:31)", "Silver at Longest run (5.00 km)"),
+            listOf("Gold at Fastest 5 km (24 minutes 31 seconds)", "Silver at Longest run (5.00 km)"),
             facts.records,
         )
     }
@@ -166,16 +204,16 @@ class RunSummaryPromptTest {
         val facts = runSummaryFacts(
             run(),
             segmentEfforts = listOf(
-                RunSegmentEffortUi(1, 10, "Cemetery Hill", "2:31", "4:12 /km", Medal.GOLD),
-                RunSegmentEffortUi(2, 11, "The Long Straight", "3:04", "5:01 /km", null),
+                RunSegmentEffortUi(1, 10, "Cemetery Hill", "2:31", "4:12 /km", Medal.GOLD, 151),
+                RunSegmentEffortUi(2, 11, "The Long Straight", "3:04", "5:01 /km", null, 184),
             ),
             zone = london,
         )
 
         assertEquals(
             listOf(
-                "Cemetery Hill in 2:31 at 4:12 /km, Gold there",
-                "The Long Straight in 3:04 at 5:01 /km",
+                "Cemetery Hill in 2 minutes 31 seconds at 4:12 /km, Gold there",
+                "The Long Straight in 3 minutes 4 seconds at 5:01 /km",
             ),
             facts.segments,
         )
@@ -245,7 +283,7 @@ class RunSummaryPromptTest {
                     Achievement(sessionId = 7, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_471.0)
                 ),
                 segmentEfforts = listOf(
-                    RunSegmentEffortUi(1, 10, "Cemetery Hill", "2:31", "4:12 /km", Medal.BRONZE)
+                    RunSegmentEffortUi(1, 10, "Cemetery Hill", "2:31", "4:12 /km", Medal.BRONZE, 151)
                 ),
                 matched = MatchedRunsUi(
                     runs = listOf(matchedRun(1, 6.0), matchedRun(7, 5.5, isThisRun = true)),
@@ -261,8 +299,8 @@ class RunSummaryPromptTest {
             "5:30 /km",
             "152 bpm",
             "Effort Score: 62",
-            "Gold at Fastest 5 km (24:31)",
-            "Cemetery Hill in 2:31 at 4:12 /km, Bronze there",
+            "Gold at Fastest 5 km (24 minutes 31 seconds)",
+            "Cemetery Hill in 2 minutes 31 seconds at 4:12 /km, Bronze there",
             "run 2 of 2",
             "30 s/km faster than usual on this route",
         ).forEach { assertTrue("missing: $it", prompt.contains(it)) }
@@ -283,7 +321,7 @@ class RunSummaryPromptTest {
         assertFalse(movingLine.contains("lost signal taken out"))
         assertTrue(movingLine.contains("the time they spent stopped taken out"))
         assertTrue(movingLine.contains("still counts as moving"))
-        assertTrue(movingLine.endsWith("26:00"))
+        assertTrue(movingLine.endsWith("26 minutes"))
     }
 
     @Test
