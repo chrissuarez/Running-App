@@ -90,8 +90,12 @@ class FloatingCoachWindow(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = position?.x ?: dp(16)
-            y = position?.y ?: dp(120)
+            // A place remembered on another orientation or screen size is pulled back on screen,
+            // or the box could open out of reach of the finger that would drag it back.
+            view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            val bounds = windowManager.currentWindowMetrics.bounds
+            x = (position?.x ?: dp(16)).coerceIn(0, (bounds.width() - view.measuredWidth).coerceAtLeast(0))
+            y = (position?.y ?: dp(120)).coerceIn(0, (bounds.height() - view.measuredHeight).coerceAtLeast(0))
         }
         return try {
             windowManager.addView(view, layout)
