@@ -19,11 +19,18 @@ import com.example.runningapp.ZoneBand
  * screen is a glance, not an emergency.
  */
 @Composable
-fun zoneBandColor(zoneBand: ZoneBand): Color = when (zoneBand) {
+fun zoneBandColor(zoneBand: ZoneBand): Color =
+    zoneBandColorOrNull(zoneBand) ?: MaterialTheme.colorScheme.onSurfaceVariant
+
+/**
+ * The same palette outside a composition — the floating coach draws with plain Views over other
+ * apps (#545) and has no theme to ask. Null for [ZoneBand.UNKNOWN], which has no colour of its own.
+ */
+fun zoneBandColorOrNull(zoneBand: ZoneBand): Color? = when (zoneBand) {
     ZoneBand.BELOW -> Color(0xFF8FD0FF)
     ZoneBand.IN -> Color(0xFF9CF7AD)
     ZoneBand.ABOVE -> Color(0xFFF2C037)
-    ZoneBand.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+    ZoneBand.UNKNOWN -> null
 }
 
 /** Cool to hot, so intensity reads down the chart at a glance. See [zoneBandColor] on green. */

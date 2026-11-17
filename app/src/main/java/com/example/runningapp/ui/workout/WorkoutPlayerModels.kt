@@ -15,6 +15,8 @@ import com.example.runningapp.hrZoneOf
 import com.example.runningapp.liveZoneStatus
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.zoneBandOf
+import com.example.runningapp.zoneLowerBpm
+import com.example.runningapp.zoneUpperBpm
 import com.example.runningapp.analysis.formatMinutesSeconds
 
 const val CUE_REASON_PLANNED = "planned_transition"
@@ -66,6 +68,17 @@ data class CoachCueUiState(
     val severity: CueSeverity
 )
 
+/**
+ * The step after this one, and how long until it starts: "Walk" in 45 seconds.
+ *
+ * Read off the same countdown the live screen prints, so the floating coach and the screen can
+ * never name different seconds (#545).
+ */
+data class NextStepUi(
+    val label: String,
+    val secondsLeft: Int
+)
+
 data class WorkoutPlayerUiState(
     val phaseLabel: String,
     val countdownText: String,
@@ -80,7 +93,14 @@ data class WorkoutPlayerUiState(
     val sensorFreshnessText: String,
     val sensorStale: Boolean,
     val timeline: IntervalTimelineUiState?,
-    val coachCue: CoachCueUiState?
+    val coachCue: CoachCueUiState?,
+    /** Null where nothing is scheduled next — an open main Phase runs until the runner says. */
+    val nextStep: NextStepUi? = null,
+    /** The heart rate [zoneBand] was judged on — smoothed while the coach samples, live otherwise. */
+    val gaugeBpm: Int = 0,
+    /** The edges of the target [zoneBand] was judged against: the Run's pinned target and profile. */
+    val targetLowBpm: Int = 0,
+    val targetHighBpm: Int = 0
 )
 
 fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
@@ -137,6 +157,21 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // gap to target; band, not zone, picks the action so words and colour agree. See #109.
     val actualZone = if (hasSignal) hrZoneOf(displayBpm, hrProfile) else null
 
+    val nextStep = when {
+        state.currentPhase == SessionPhase.WARM_UP -> NextStepUi("Run", countdownSeconds)
+        state.currentPhase == SessionPhase.COOL_DOWN -> NextStepUi("Finish", countdownSeconds)
+        isStructuredMain -> NextStepUi(
+            label = when (state.nextIntervalType) {
+                StructuredWorkoutPhase.RUN -> "Run"
+                StructuredWorkoutPhase.WALK -> "Walk"
+                // The last Interval hands the Run to its cool-down (see Run's interval step).
+                null -> "Cool-down"
+            },
+            secondsLeft = countdownSeconds
+        )
+        else -> null
+    }
+
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)
 
@@ -183,7 +218,11 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         },
         sensorStale = state.bpm <= 0 || state.lastHrAgeSeconds >= 5,
         timeline = timeline,
-        coachCue = cue
+        coachCue = cue,
+        nextStep = nextStep,
+        gaugeBpm = if (hasSignal) displayBpm else 0,
+        targetLowBpm = zoneLowerBpm(targetZone, hrProfile),
+        targetHighBpm = zoneUpperBpm(targetZone, hrProfile)
     )
 }
 
