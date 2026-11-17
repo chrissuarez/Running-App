@@ -888,4 +888,15 @@ class SettingsRepositoryTest {
         val settings = userSettingsOf(mutablePreferencesOf(PreferencesKeys.FLOATING_COACH_X to 40))
         assertNull(settings.floatingCoachPosition)
     }
+
+    @Test
+    fun `replacing run history resets the Garmin question's marker`() {
+        val preferences = mutablePreferencesOf(
+            PreferencesKeys.GARMIN_POST_ASKED_THROUGH to 100L,
+            PreferencesKeys.HISTORY_RECORDS_SEEDED to true,
+        )
+        preferences.clearHistoryScopedMarks()
+        assertNull(preferences[PreferencesKeys.GARMIN_POST_ASKED_THROUGH])
+        assertNull(preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED])
+    }
 }

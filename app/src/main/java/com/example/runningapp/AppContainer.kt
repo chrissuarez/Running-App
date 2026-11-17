@@ -103,9 +103,10 @@ class AppContainer(context: Context) {
                 // otherwise restore into an empty book that the seeding pass declines to fill, at
                 // this launch and every one after. Cleared ahead of the swap so a kill cannot strand
                 // it — a restore that then fails costs one re-measure of unchanged history and
-                // arrives at the same book.
+                // arrives at the same book. The Garmin question's watermark goes the same way: restored run
+                // ids restart from the backup's, below a watermark kept from the history that went (#544).
                 if (PendingRestore.isArmed(appContext)) {
-                    runBlocking { settingsRepository.clearHistoryRecordsSeeded() }
+                    runBlocking { settingsRepository.clearHistoryScopedMarks() }
                 }
                 // A restore the runner confirmed and the app relaunched for (#86). First, because it
                 // is the one that was explicitly asked for — and once it has run the database
