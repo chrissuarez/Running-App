@@ -16,6 +16,9 @@ import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.export.ExportShareFile
 import com.example.runningapp.export.FitWriter
 import com.example.runningapp.export.GarminImportFile
+import com.example.runningapp.export.GarminPostLedger
+import com.example.runningapp.export.GarminPostOffer
+import com.example.runningapp.export.GarminUploadFile
 import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
@@ -79,6 +82,14 @@ class SessionDetailViewModel(
     private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
     /** Where the Garmin hand-off leaves its file (#217). Null wherever none is wired (tests). */
     private val downloadsFileStore: DownloadsFileStore? = null,
+    /**
+     * Which Runs have been asked "Post this run to Garmin?" (#544). Null wherever none is wired:
+     * with nowhere to remember the answer the question would come back on every open, so it is
+     * never asked.
+     */
+    private val garminPostLedger: GarminPostLedger? = null,
+    /** The wall clock the Garmin question measures a Run's freshness against (#544). */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     /**
@@ -165,6 +176,70 @@ class SessionDetailViewModel(
     /** The import page has been opened for the saved file. */
     fun garminImportHandled() {
         _garminImportReady.value = null
+    }
+
+    // --- "Post this run to Garmin?" (#544) ---
+
+    /** The Run whose page is asking "Post this run to Garmin?" right now, or null. */
+    private val _garminPostOffer = MutableStateFlow<Long?>(null)
+    val garminPostOffer = _garminPostOffer.asStateFlow()
+
+    /**
+     * The Run's file, written and ready for the in-app Garmin page. Held until the screen
+     * acknowledges it, named by Run, for [exportShareReady]'s reasons.
+     */
+    private val _garminUploadReady = MutableStateFlow<GarminUploadFile?>(null)
+    val garminUploadReady = _garminUploadReady.asStateFlow()
+
+    /**
+     * Asks "Post this run to Garmin?" if [run] has not been asked about yet ([GarminPostOffer]).
+     *
+     * The page calls this with its watched row every time the row changes, so a treadmill Run
+     * whose distance is saved a moment after the page opened is asked then, with the distance in
+     * the file. Repeated calls are harmless: the ledger is read each time, and a question already
+     * up is left alone.
+     */
+    fun considerGarminPost(run: RunnerSession) {
+        val ledger = garminPostLedger ?: return
+        if (_garminPostOffer.value != null) return
+        viewModelScope.launch {
+            if (GarminPostOffer.shouldAsk(run, ledger.askedThroughRunId(), clock()) &&
+                _garminPostOffer.value == null
+            ) {
+                _garminPostOffer.value = run.id
+            }
+        }
+    }
+
+    /**
+     * The runner's answer. Either way the Run is never asked about again. Yes writes the Run's FIT
+     * — the same file the share sheet and the Downloads hand-off write — into the app's own files,
+     * where the in-app page can read it, and announces it on [garminUploadReady].
+     */
+    fun answerGarminPost(sessionId: Long, post: Boolean) {
+        if (_garminPostOffer.value == sessionId) _garminPostOffer.value = null
+        viewModelScope.launch {
+            garminPostLedger?.markAsked(sessionId)
+            if (!post) return@launch
+            val uri = try {
+                val store = exportFileStore
+                val built = assembleExport(sessionId, ExportFormat.FIT)
+                if (store == null || built == null) null else store.write(built.fileName, built.contents)
+            } catch (e: Exception) {
+                Log.e("RunExport", "Failed to write FIT for Garmin, sessionId=$sessionId", e)
+                null
+            }
+            if (uri == null) {
+                _exportShareFailed.value = sessionId
+            } else {
+                _garminUploadReady.value = GarminUploadFile(sessionId, uri)
+            }
+        }
+    }
+
+    /** The in-app Garmin page has been opened with the file. */
+    fun garminUploadHandled() {
+        _garminUploadReady.value = null
     }
 
     /** The failure has been shown to the runner. */
@@ -806,6 +881,7 @@ class SessionDetailViewModelFactory(
     private val runRouteSaver: RunRouteSaver? = null,
     private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
     private val downloadsFileStore: DownloadsFileStore? = null,
+    private val garminPostLedger: GarminPostLedger? = null,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
@@ -818,6 +894,7 @@ class SessionDetailViewModelFactory(
                 runRouteSaver = runRouteSaver,
                 savedCourses = savedCourses,
                 downloadsFileStore = downloadsFileStore,
+                garminPostLedger = garminPostLedger,
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
