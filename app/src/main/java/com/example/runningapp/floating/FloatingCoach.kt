@@ -13,7 +13,9 @@ import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
  * zone, and what the Workout does next.
  *
  * Everything it shows is read off [mapWorkoutPlayerUiState] — the live screen's own reading — so
- * the box and the screen can never disagree about a number. This file holds the decisions; the
+ * the box and the screen can never disagree about a number. That includes the screen's one split:
+ * the big number is the live beat, as the screen prints it, while the needle and colour follow the
+ * smoothed reading the band is judged on, exactly as the screen's zone line does. This file holds the decisions; the
  * window itself ([FloatingCoachWindow]) only draws what it is handed.
  */
 data class FloatingCoachFace(

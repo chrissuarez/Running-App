@@ -17,7 +17,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Binder
 import android.content.pm.ServiceInfo
@@ -26,6 +25,7 @@ import android.os.PowerManager
 import android.os.IBinder
 import android.app.PendingIntent
 import android.os.Handler
+import android.provider.Settings
 import android.os.HandlerThread
 import android.util.Log
 import androidx.core.app.ActivityCompat
@@ -33,10 +33,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import com.example.runningapp.floating.AppOnScreen
-import com.example.runningapp.floating.FloatingCoachWindow
-import com.example.runningapp.floating.floatingCoachFace
-import com.example.runningapp.floating.floatingCoachShows
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
@@ -55,6 +51,10 @@ import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
+import com.example.runningapp.floating.AppOnScreen
+import com.example.runningapp.floating.FloatingCoachWindow
+import com.example.runningapp.floating.floatingCoachFace
+import com.example.runningapp.floating.floatingCoachShows
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.CourseAlerts
 import com.example.runningapp.routes.OffCourseWatch
@@ -1625,7 +1625,9 @@ class HrForegroundService : Service() {
         val window = FloatingCoachWindow(
             context = this,
             onMoved = { position ->
-                serviceScope.launch(Dispatchers.IO) { settingsRepository.setFloatingCoachPosition(position) }
+                // finalizationScope, which outlives onDestroy: a drag let go just before the
+                // service goes down is still remembered.
+                finalizationScope.launch { settingsRepository.setFloatingCoachPosition(position) }
             },
             onTapped = {
                 // Allowed from the background because the runner granted "Display over other apps".
