@@ -94,6 +94,13 @@ fun SettingsScreen(
     onSplitAnnouncementsChange: (Boolean) -> Unit,
     onTurnaroundCueChange: (Boolean) -> Unit,
     onAutoPauseChange: (Boolean) -> Unit,
+    /**
+     * Whether the floating coach is on — the runner's wish *and* Android's permission, so the
+     * switch is never drawn on for a box the phone will not let the app draw (#545).
+     */
+    floatingCoachOn: Boolean,
+    /** Turning it on asks for "Display over other apps" first, when the phone has not granted it. */
+    onFloatingCoachChange: (Boolean) -> Unit,
     onAiDataSharingChange: (Boolean) -> Unit,
     onTestingModeChange: (Boolean) -> Unit,
     onManageStrap: () -> Unit,
@@ -285,6 +292,14 @@ fun SettingsScreen(
                 label = "Auto-pause",
                 checked = settings.autoPauseEnabled,
                 onCheckedChange = onAutoPauseChange
+            )
+            SettingsSwitchRow(
+                label = "Floating coach",
+                // Says what it is for and what turning it on will ask, because the system screen
+                // that follows the tap is not this app's and names nothing about why.
+                subtitle = "A small box over other apps, like Netflix on the treadmill. Needs \"Display over other apps\".",
+                checked = floatingCoachOn,
+                onCheckedChange = onFloatingCoachChange
             )
 
             Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))

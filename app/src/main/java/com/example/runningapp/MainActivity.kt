@@ -16,6 +16,8 @@ import android.os.Build
 import android.util.Log
 import android.os.Bundle
 import android.os.IBinder
+import android.provider.Settings
+import com.example.runningapp.floating.AppOnScreen
 import androidx.room.withTransaction
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -142,6 +144,10 @@ class MainActivity : ComponentActivity() {
     // Unlike START (which proceeds even on denial — GPS is a sensor, #110),
     // a scan without the permission is a pure dead-end, so it only fires on grant.
     private var pendingScan = false
+
+    // Whether Android lets this app draw over other apps (#545). Asked again each time the app comes
+    // back to the front, because the runner grants or withdraws it in system settings, outside it.
+    private val mayDrawOverlays = mutableStateOf(false)
 
     /**
      * A `.gpx` another app asked this one to open, waiting for the screen to be built (#54).
@@ -426,6 +432,18 @@ class MainActivity : ComponentActivity() {
                             appContainer.offlineMap.download()
                         } else {
                             appContainer.offlineMap.locationRefused()
+                        }
+                    }
+                    // The floating coach's permission screen (#545). Android returns no answer from
+                    // it, so the permission itself is asked on the way back; only a grant turns the
+                    // switch on, so the switch never claims a box that cannot be drawn.
+                    val askToDrawOverlays = rememberLauncherForActivityResult(
+                        ActivityResultContracts.StartActivityForResult()
+                    ) {
+                        val granted = Settings.canDrawOverlays(this@MainActivity)
+                        mayDrawOverlays.value = granted
+                        if (granted) {
+                            scope.launch(Dispatchers.IO) { settingsRepository.setFloatingCoachEnabled(true) }
                         }
                     }
                     // OpenDocument rather than GetContent: it hands back a Uri this app may read
@@ -812,6 +830,19 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onAutoPauseChange = { enabled ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setAutoPauseEnabled(enabled) }
+                                },
+                                floatingCoachOn = userSettings.floatingCoachEnabled && mayDrawOverlays.value,
+                                onFloatingCoachChange = { enabled ->
+                                    if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
+                                        askToDrawOverlays.launch(
+                                            Intent(
+                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                Uri.parse("package:$packageName")
+                                            )
+                                        )
+                                    } else {
+                                        scope.launch(Dispatchers.IO) { settingsRepository.setFloatingCoachEnabled(enabled) }
+                                    }
                                 },
                                 onAiDataSharingChange = { enabled ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setAiDataSharingEnabled(enabled) }
@@ -1768,6 +1799,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // The floating coach hides while the app is in sight (#545).
+        AppOnScreen.screenStarted()
+        mayDrawOverlays.value = Settings.canDrawOverlays(this)
         // The weather Runs are still owed, asked for every time the app comes to the front rather than
         // once per process, so a phone that was offline at launch tries again when the runner comes
         // back to it (#444). An ask while one is still going runs once it ends.
@@ -1779,6 +1813,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        AppOnScreen.screenStopped()
         if (isBound) {
             unbindService(connection)
             isBound = false

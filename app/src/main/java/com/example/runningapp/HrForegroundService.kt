@@ -17,6 +17,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Binder
 import android.content.pm.ServiceInfo
@@ -32,6 +33,10 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import com.example.runningapp.floating.AppOnScreen
+import com.example.runningapp.floating.FloatingCoachWindow
+import com.example.runningapp.floating.floatingCoachFace
+import com.example.runningapp.floating.floatingCoachShows
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
@@ -42,6 +47,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -201,6 +207,10 @@ class HrForegroundService : Service() {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // The box drawn over other apps during a Run (#545). Created in onCreate, taken down in
+    // onDestroy, and shown or hidden in between only by [followFloatingCoach].
+    private var floatingCoachWindow: FloatingCoachWindow? = null
 
     // Detached from serviceScope on purpose: finalizing a Run must survive onDestroy() cancelling
     // serviceScope when a run is stopped from the background. It carries the Run's own last writes
@@ -1601,6 +1611,46 @@ class HrForegroundService : Service() {
         )
 
         createNotificationChannel()
+
+        followFloatingCoach()
+    }
+
+    /**
+     * Shows the floating coach while [floatingCoachShows] says so, and takes it down the moment it
+     * does not (#545). Asked again on every published state, which arrives at least once a second
+     * during a Run, so a permission withdrawn in system settings takes the box down within a second.
+     * Everything it draws comes from the same published state the live screen reads.
+     */
+    private fun followFloatingCoach() {
+        val window = FloatingCoachWindow(
+            context = this,
+            onMoved = { position ->
+                serviceScope.launch(Dispatchers.IO) { settingsRepository.setFloatingCoachPosition(position) }
+            },
+            onTapped = {
+                // Allowed from the background because the runner granted "Display over other apps".
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            },
+        )
+        floatingCoachWindow = window
+        serviceScope.launch {
+            combine(_hrState, AppOnScreen.isOnScreen) { state, appOnScreen -> state to appOnScreen }
+                .collect { (state, appOnScreen) ->
+                    val shows = floatingCoachShows(
+                        enabled = state.userSettings.floatingCoachEnabled,
+                        mayDrawOverlays = Settings.canDrawOverlays(this@HrForegroundService),
+                        lifecycle = state.lifecycle,
+                        appOnScreen = appOnScreen,
+                    )
+                    if (shows) {
+                        window.show(floatingCoachFace(state), state.userSettings.floatingCoachPosition)
+                    } else {
+                        window.hide()
+                    }
+                }
+        }
     }
 
     /**
@@ -3125,7 +3175,10 @@ class HrForegroundService : Service() {
         }
         openGatts.clear()
 
-        // 3. Kill the remaining background loops
+        // 3. Kill the remaining background loops — and the floating coach with the loop that drives
+        // it, taken down first so no window outlives the service that drew it (#545).
+        floatingCoachWindow?.hide()
+        floatingCoachWindow = null
         serviceScope.cancel()
 
         locationTracker?.shutdown()
