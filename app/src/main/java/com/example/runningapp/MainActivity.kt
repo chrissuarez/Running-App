@@ -1010,6 +1010,13 @@ class MainActivity : ComponentActivity() {
                                 if (!summaryFactsSettled) return@LaunchedEffect
                                 sessionDetailViewModel.requestRunSummary(id)
                             }
+                            // Held for a treadmill Run's distance (#543): the ask above waits inside the
+                            // view model, and this is only so the card can say so.
+                            val summaryWaitingForDistance by produceState(initialValue = false, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.runSummaryWaitingForDistance(id).collect { value = it }
+                                }
+                            }
                             val summaryUi = sessionId?.let { id ->
                                 RunSummaryUi(
                                     text = sessionSummaryRow?.text,
@@ -1020,6 +1027,7 @@ class MainActivity : ComponentActivity() {
                                     // again" writes words that are kept just as long (#76).
                                     factsSettled = summaryFactsSettled,
                                     sharingAllowed = summariesAllowed,
+                                    waitingForDistance = summaryWaitingForDistance,
                                 )
                             }
 
@@ -1146,6 +1154,9 @@ class MainActivity : ComponentActivity() {
                                 runSummary = summaryUi,
                                 onRegenerateRunSummary = sessionId?.let { id ->
                                     { sessionDetailViewModel.regenerateRunSummary(id) }
+                                },
+                                onWriteRunSummaryWithoutDistance = {
+                                    sessionId?.let { sessionDetailViewModel.writeSummaryWithoutDistance(it) }
                                 },
                                 deleteInProgress = runIsGoing,
                             )

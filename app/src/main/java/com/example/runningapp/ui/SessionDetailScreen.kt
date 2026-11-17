@@ -127,6 +127,7 @@ fun SessionDetailScreen(
     // Asking for the words again — after a failure, or because the runner wants different ones.
     // Null rather than a no-op for [onOpenSegment]'s reason.
     onRegenerateRunSummary: (() -> Unit)? = null,
+    onWriteRunSummaryWithoutDistance: () -> Unit = {},
     // Whether this Run's delete has been asked for and has not landed yet (#414).
     //
     // The delete is asked for here and finishes somewhere else, so between the tap and the page
@@ -308,7 +309,11 @@ fun SessionDetailScreen(
                 // Drawing nothing is the ordinary case for most of history, and the card decides
                 // that itself ([RunSummaryCard]) — there is no spacer to leave behind.
                 if (runSummary != null && onRegenerateRunSummary != null) {
-                    RunSummaryCard(summary = runSummary, onRegenerate = onRegenerateRunSummary)
+                    RunSummaryCard(
+                        summary = runSummary,
+                        onRegenerate = onRegenerateRunSummary,
+                        onWriteWithoutDistance = onWriteRunSummaryWithoutDistance,
+                    )
                     if (runSummary.hasSomethingToSay) Spacer(modifier = Modifier.height(24.dp))
                 }
 

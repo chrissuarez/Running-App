@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -67,6 +68,9 @@ class SessionDetailViewModelRunSummaryTest {
         // settled, which is the state every ask below is allowed to happen in.
         recordsScored = true,
         segmentsTimed = true,
+        // Outdoors, because a Run's mode defaults to treadmill and a treadmill Run with no distance
+        // is held for it (#543) — which is not what these cases are about.
+        runMode = com.example.runningapp.run.RunMode.OUTDOOR.settingValue,
     )
 
     /** The second Run, for the case where two of them are in play at once. */
@@ -572,5 +576,130 @@ class SessionDetailViewModelRunSummaryTest {
         assertEquals(setOf(7L), viewModel.summaryRefused.value)
         assertTrue(viewModel.summaryFailed.value.isEmpty())
         verify(client, never()).summariseRun(any())
+    }
+
+    // --- A treadmill Run waits for its distance (#543) ---
+
+    private val treadmillRun = finishedRun.copy(runMode = com.example.runningapp.run.RunMode.TREADMILL.settingValue)
+
+    /** A viewModel over Run 7 as the given watched row, so a test can state a distance mid-wait. */
+    private fun viewModelOverRun(run: MutableStateFlow<RunnerSession>, client: AiCoachClient) =
+        SessionDetailViewModel(
+            repositoryWithRecordBook(
+                sessionDao = mock<SessionDao> {
+                    on { getSessionByIdFlow(7) } doReturn run
+                    on { anyRecordScoringOwedFlow() } doReturn flowOf(false)
+                    on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
+                    on { anyRunShapeOwedFlow() } doReturn flowOf(false)
+                    onBlocking { getSessionById(7) } doReturn run.value
+                },
+                achievementDao = mock<AchievementDao> {
+                    onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                },
+                runSummaryDao = mock<RunSummaryDao> { onBlocking { summary(7) } doReturn null },
+                settingsRepository = mock<SettingsRepository> {
+                    on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
+                },
+                aiCoachClient = client,
+            )
+        )
+
+    @Test
+    fun `a treadmill run with no distance asks for nothing and says it is waiting`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelOverRun(MutableStateFlow(treadmillRun), client)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+        assertTrue(viewModel.runSummaryWaitingForDistance(7).first())
+    }
+
+    @Test
+    fun `saving a distance starts the held summary`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val run = MutableStateFlow(treadmillRun)
+        val viewModel = viewModelOverRun(run, client)
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        run.value = treadmillRun.copy(distanceKm = 5.0)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+        assertFalse(viewModel.runSummaryWaitingForDistance(7).first())
+    }
+
+    @Test
+    fun `the button starts the summary with no distance`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelOverRun(MutableStateFlow(treadmillRun), client)
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        viewModel.writeSummaryWithoutDistance(7)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+    }
+
+    @Test
+    fun `a treadmill run that already holds a distance is not held`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelOverRun(MutableStateFlow(treadmillRun.copy(distanceKm = 5.0)), client)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+    }
+
+    @Test
+    fun `an outdoor run with no distance is not held`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelOverRun(MutableStateFlow(finishedRun), client)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+    }
+
+    @Test
+    fun `a treadmill run already written about is not held and not rewritten`() = runTest(dispatcher) {
+        val client = modelSaying("new words")
+        val viewModel = SessionDetailViewModel(
+            repositoryWithRecordBook(
+                sessionDao = mock<SessionDao> {
+                    on { getSessionByIdFlow(7) } doReturn flowOf(treadmillRun)
+                    on { anyRecordScoringOwedFlow() } doReturn flowOf(false)
+                    on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
+                    on { anyRunShapeOwedFlow() } doReturn flowOf(false)
+                },
+                achievementDao = mock<AchievementDao>(),
+                runSummaryDao = mock<RunSummaryDao> {
+                    onBlocking { summary(7) } doReturn RunSummaryRow(sessionId = 7, text = "old", writtenAtMillis = 1L)
+                },
+                settingsRepository = mock<SettingsRepository> {
+                    on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
+                },
+                aiCoachClient = client,
+            )
+        )
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+    }
+
+    @Test
+    fun `the card shows the wait only while no words are written`() {
+        val waiting = RunSummaryUi(text = null, isWriting = false, failed = false, waitingForDistance = true)
+        assertTrue(waiting.showsDistanceWait)
+        assertTrue(waiting.hasSomethingToSay)
+        assertFalse(waiting.canAskAgain)
+        assertFalse(waiting.copy(text = "words").showsDistanceWait)
     }
 }

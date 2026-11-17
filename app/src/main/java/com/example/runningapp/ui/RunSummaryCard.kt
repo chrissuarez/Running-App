@@ -62,7 +62,18 @@ data class RunSummaryUi(
      * switch must not hide a working button for ever.
      */
     val sharingAllowed: Boolean = true,
+    /**
+     * Whether the words are being held for a treadmill Run's distance (#543).
+     *
+     * A treadmill Run's summary names the distance, which only the runner can supply, and the words
+     * are kept for ever — so the ask waits for it rather than writing without it a few seconds
+     * before it is typed. Only meaningful while no words are written.
+     */
+    val waitingForDistance: Boolean = false,
 ) {
+    /** Whether the card is the "waiting for the distance" one: held, no words, and allowed to write. */
+    val showsDistanceWait: Boolean get() = waitingForDistance && text == null && sharingAllowed
+
     /**
      * Whether there is a card here at all.
      *
@@ -70,7 +81,7 @@ data class RunSummaryUi(
      * draw" and "is there anything to leave a gap under" are the same question — asked in two places
      * they drift, and the page ends up with a 24dp hole where a card is not.
      */
-    val hasSomethingToSay: Boolean get() = text != null || isWriting || failed || refused
+    val hasSomethingToSay: Boolean get() = text != null || isWriting || failed || refused || showsDistanceWait
 
     /**
      * Whether asking again is worth offering.
@@ -100,7 +111,8 @@ data class RunSummaryUi(
      * which reads as the app contradicting itself. The switch has to be part of the gate because
      * this is the case where no ask is made at all.
      */
-    val canAskAgain: Boolean get() = !isWriting && !refused && factsSettled && sharingAllowed
+    val canAskAgain: Boolean get() =
+        !isWriting && !refused && factsSettled && sharingAllowed && !showsDistanceWait
 }
 
 /** What the card is titled. */
@@ -108,6 +120,13 @@ const val RUN_SUMMARY_TITLE: String = "This run"
 
 /** What it says while the words are being written. */
 const val RUN_SUMMARY_WRITING_MESSAGE: String = "Reading this run…"
+
+/** What it says while the words wait for a treadmill Run's distance (#543). */
+const val RUN_SUMMARY_WAITING_FOR_DISTANCE_MESSAGE: String =
+    "Waiting for the distance — type it in above and this run gets its summary."
+
+/** The button that stops waiting and writes the summary with no distance in it (#543). */
+const val RUN_SUMMARY_WITHOUT_DISTANCE_LABEL: String = "Write it without a distance"
 
 /** What it says when they could not be. */
 const val RUN_SUMMARY_FAILED_MESSAGE: String =
@@ -136,6 +155,7 @@ fun RunSummaryCard(
     summary: RunSummaryUi,
     onRegenerate: () -> Unit,
     modifier: Modifier = Modifier,
+    onWriteWithoutDistance: () -> Unit = {},
 ) {
     if (!summary.hasSomethingToSay) return
 
@@ -153,6 +173,19 @@ fun RunSummaryCard(
             // had in exchange for something they may not get.
             summary.text?.let { text ->
                 Text(text = text, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (summary.showsDistanceWait) {
+                Text(
+                    text = RUN_SUMMARY_WAITING_FOR_DISTANCE_MESSAGE,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(
+                    onClick = onWriteWithoutDistance,
+                    modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                ) { Text(RUN_SUMMARY_WITHOUT_DISTANCE_LABEL) }
             }
 
             if (summary.isWriting) {
