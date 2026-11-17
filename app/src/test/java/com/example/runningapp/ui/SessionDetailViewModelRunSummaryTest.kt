@@ -724,6 +724,38 @@ class SessionDetailViewModelRunSummaryTest {
     }
 
     @Test
+    fun `a distance removed after a failed ask leaves no wait with nothing behind it`() = runTest(dispatcher) {
+        val client = modelSaying(null)
+        val run = MutableStateFlow(treadmillRun.copy(distanceKm = 5.0))
+        val viewModel = viewModelOverRun(run, client)
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+        assertEquals(setOf(7L), viewModel.summaryFailed.value)
+
+        run.value = treadmillRun
+        advanceUntilIdle()
+
+        assertTrue(viewModel.summaryHeld.value.isEmpty())
+        // The button, were it reached some other way, still leads to an ask.
+        viewModel.writeSummaryWithoutDistance(7)
+        advanceUntilIdle()
+        verify(client, times(2)).summariseRun(any())
+    }
+
+    @Test
+    fun `the held set holds a run only while its ask is suspended`() = runTest(dispatcher) {
+        val run = MutableStateFlow(treadmillRun)
+        val viewModel = viewModelOverRun(run, modelSaying("words"))
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+        assertEquals(setOf(7L), viewModel.summaryHeld.value)
+
+        run.value = treadmillRun.copy(distanceKm = 5.0)
+        advanceUntilIdle()
+        assertTrue(viewModel.summaryHeld.value.isEmpty())
+    }
+
+    @Test
     fun `the card shows the wait only while no words are written`() {
         val waiting = RunSummaryUi(text = null, isWriting = false, failed = false, waitingForDistance = true)
         assertTrue(waiting.showsDistanceWait)

@@ -274,6 +274,10 @@ class SessionDetailViewModel(
      */
     private val autoRequested = mutableSetOf<Long>()
 
+    /** Runs with an ask actually suspended on the distance gate (#543) — what the card says it waits for. */
+    private val _summaryHeld = MutableStateFlow<Set<Long>>(emptySet())
+    val summaryHeld = _summaryHeld.asStateFlow()
+
     /** Treadmill Runs whose runner chose a summary with no distance in it (#543). */
     private val _summaryWithoutDistance = MutableStateFlow<Set<Long>>(emptySet())
 
@@ -363,8 +367,27 @@ class SessionDetailViewModel(
             // that already has words never even shows the wait. The wait is inside the one launched
             // ask rather than a gate on the page, so the page's repeated calls stay no-ops and the
             // distance being saved — or the runner choosing to go without — is all it takes.
-            runSummaryWaitingForDistance(sessionId).first { !it }
+            holdForDistance(sessionId)
             askForRunSummary(sessionId)
+        }
+    }
+
+    /**
+     * Suspends while this Run's ask must wait for its distance, and records that it is doing so.
+     *
+     * The card's "waiting" state is read from [summaryHeld], not from the condition alone: the
+     * condition can come true later with no ask behind it (a Run whose first ask already failed,
+     * its distance then removed), and a card promising a summary on the next distance would be
+     * promising something nothing is waiting to deliver.
+     */
+    private suspend fun holdForDistance(sessionId: Long) {
+        val waiting = runSummaryWaitingForDistance(sessionId)
+        if (!waiting.first()) return
+        _summaryHeld.update { it + sessionId }
+        try {
+            waiting.first { !it }
+        } finally {
+            _summaryHeld.update { it - sessionId }
         }
     }
 
@@ -388,13 +411,21 @@ class SessionDetailViewModel(
     /**
      * The runner's "write it without a distance": ends the wait and lets the held ask go.
      *
+     * Where no ask is suspended — the first one already ran and failed — it starts one, so the
+     * button always leads to an ask rather than only recording a choice nothing reads.
+     *
      * Remembered for this ViewModel's life, so leaving the page and coming back does not put the
      * wait back up. It is not stored, deliberately: a later open of a still-distance-less Run, in a
      * new session of the app, is a fresh chance to state the distance first — but only for a Run
      * with no words yet, since a written Run is never waited on.
      */
     fun writeSummaryWithoutDistance(sessionId: Long) {
+        val suspended = sessionId in _summaryHeld.value
         _summaryWithoutDistance.update { it + sessionId }
+        if (!suspended) {
+            autoRequested.add(sessionId)
+            askForRunSummary(sessionId)
+        }
     }
 
     /**
