@@ -709,6 +709,21 @@ class SessionDetailViewModelRunSummaryTest {
     }
 
     @Test
+    fun `a treadmill run recorded under an opt-out is refused, not held`() = runTest(dispatcher) {
+        val client = modelSaying("words")
+        val viewModel = viewModelWatching(
+            MutableStateFlow(true), client, session = treadmillRun.copy(includeInAiTraining = false),
+        )
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+        assertFalse(viewModel.runSummaryWaitingForDistance(7).first())
+    }
+
+    @Test
     fun `the card shows the wait only while no words are written`() {
         val waiting = RunSummaryUi(text = null, isWriting = false, failed = false, waitingForDistance = true)
         assertTrue(waiting.showsDistanceWait)

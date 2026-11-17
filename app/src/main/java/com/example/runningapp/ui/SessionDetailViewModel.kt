@@ -374,15 +374,15 @@ class SessionDetailViewModel(
      * Ends when a Stated Distance is saved, or when the runner has chosen to go without one
      * ([writeSummaryWithoutDistance]).
      *
-     * **Never held while AI sharing is off.** Nothing will be written either way, and holding the
-     * ask would stop the repository's refusal from being recorded — leaving the card blank where it
-     * has always said why there is no summary. Let through, the ask is refused as it was before.
+     * **Held only where the ask would be accepted** ([SessionRepository.runSummaryAcceptedFlow]):
+     * an ask the repository will refuse — sharing off, a Run recorded under an opt-out — must reach
+     * it, or the refusal is never recorded and the card promises words that cannot come.
      */
     fun runSummaryWaitingForDistance(sessionId: Long): Flow<Boolean> = combine(
         sessionRepository.runSummaryAwaitsDistanceFlow(sessionId),
+        sessionRepository.runSummaryAcceptedFlow(sessionId),
         _summaryWithoutDistance,
-        _summariesAllowed,
-    ) { awaiting, skipped, allowed -> awaiting && allowed && sessionId !in skipped }
+    ) { awaiting, accepted, skipped -> awaiting && accepted && sessionId !in skipped }
         .distinctUntilChanged()
 
     /**

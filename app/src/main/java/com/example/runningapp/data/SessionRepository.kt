@@ -13,6 +13,7 @@ import com.example.runningapp.startingNow
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.UserSettings
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.PlanTest
@@ -2850,6 +2851,39 @@ class SessionRepository(
             .distinctUntilChanged()
 
     /**
+     * The one rule for whether the app may ask the model about a Run at all (#543): the Run is there
+     * and finished, was not recorded under an opt-out, and the settings as they stand allow it.
+     *
+     * Shared by [writeRunSummary], which enforces it, and [runSummaryAcceptedFlow], which lets
+     * anything that would *hold* an ask ask the same question. A hold may only be put on an ask
+     * this would accept: held for something that is going to be refused, the refusal is never
+     * recorded and the card promises words that cannot come. A refusal reason added here is
+     * therefore honoured by both without either changing.
+     */
+    private fun refusesRunSummary(session: RunnerSession?, settings: UserSettings?): Boolean =
+        session == null ||
+            !session.isFinished() ||
+            !session.includeInAiTraining ||
+            settings == null ||
+            !settings.aiDataSharingEnabled ||
+            settings.testingModeEnabled
+
+    /**
+     * Whether [writeRunSummary] would accept an ask for this Run right now (#543), watched.
+     *
+     * False for a Run that is gone: there is nothing to hold an ask for, and the ask's own refusal
+     * is the right answer.
+     */
+    fun runSummaryAcceptedFlow(sessionId: Long): Flow<Boolean> = combine(
+        sessionDao.getSessionByIdFlow(sessionId),
+        settingsRepository?.userSettingsFlow ?: flowOf(null),
+    ) { session, settings ->
+        runSummaryDao != null &&
+            aiCoachClient?.canBeAsked == true &&
+            !refusesRunSummary(session, settings)
+    }.distinctUntilChanged()
+
+    /**
      * Asks the model for a Run's summary and keeps what it says (#76).
      *
      * The prompt is built by the caller and is a pure function of stored facts
@@ -2918,10 +2952,9 @@ class SessionRepository(
     ): RunSummaryOutcome {
         val summaries = runSummaryDao ?: return RunSummaryOutcome.REFUSED
         val client = aiCoachClient?.takeIf { it.canBeAsked } ?: return RunSummaryOutcome.REFUSED
-        val session = sessionDao.getSessionById(sessionId) ?: return RunSummaryOutcome.REFUSED
-        if (!session.isFinished() || !session.includeInAiTraining) return RunSummaryOutcome.REFUSED
-        val settings = settingsRepository?.userSettingsFlow?.first() ?: return RunSummaryOutcome.REFUSED
-        if (!settings.aiDataSharingEnabled || settings.testingModeEnabled) return RunSummaryOutcome.REFUSED
+        val session = sessionDao.getSessionById(sessionId)
+        val settings = settingsRepository?.userSettingsFlow?.first()
+        if (refusesRunSummary(session, settings)) return RunSummaryOutcome.REFUSED
 
         val promptSent = buildPrompt() ?: return RunSummaryOutcome.REFUSED
         val firstAnswer = client.summariseRun(promptSent) ?: return RunSummaryOutcome.FAILED
