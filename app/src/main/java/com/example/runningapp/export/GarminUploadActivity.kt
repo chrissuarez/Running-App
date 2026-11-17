@@ -29,7 +29,7 @@ import com.example.runningapp.BuildConfig
  * Everything this page decides — which hosts stay inside it, how it presents itself, what the file
  * box is answered with — is [GarminWebPage]'s, so it can be tested off the phone. What is left here
  * is the WebView plumbing: the sign-in cookie kept between visits, so the runner signs in once, and
- * Back walking the page's own history before it closes.
+ * Back closing the page straight back to the Run.
  */
 class GarminUploadActivity : ComponentActivity() {
 
@@ -85,10 +85,11 @@ class GarminUploadActivity : ComponentActivity() {
             }
         }
 
+        // Back closes the page and returns to the Run. Walking the page's own history does not
+        // work here: behind the import page sit Garmin's sign-in redirects, so Back only ever
+        // landed on the sign-in screen again (phone test, 2026-11-17).
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (webView.canGoBack()) webView.goBack() else finish()
-            }
+            override fun handleOnBackPressed() = finish()
         })
 
         if (savedInstanceState == null || webView.restoreState(savedInstanceState) == null) {
