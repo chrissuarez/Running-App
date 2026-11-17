@@ -387,14 +387,32 @@ class AudioCueManagerTest {
     }
 
     @Test
-    fun `a cue still waiting when the service is destroyed is never spoken`() {
+    fun `a cue still waiting when the service is destroyed is spoken before the engine goes`() {
+        // The cool-down's closing line queued behind a warning already playing (#550).
         lease.enqueue("in flight", CuePriority.INSTRUCTION)
-        lease.enqueue("waiting", CuePriority.INSTRUCTION)
+        lease.enqueue("Cool down complete. Run finished.", CuePriority.INSTRUCTION)
 
         lease.shutdown()
         finishCurrent()
+        verify(tts, never()).shutdown()
 
-        assertEquals(listOf("in flight"), spokenTexts())
+        finishCurrent()
+        assertEquals(listOf("in flight", "Cool down complete. Run finished."), spokenTexts())
+        verify(tts).shutdown()
+    }
+
+    @Test
+    fun `a drain the engine never finishes is cut off by the one grace period`() {
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("waiting", CuePriority.INSTRUCTION)
+        lease.enqueue("also waiting", CuePriority.INSTRUCTION)
+        lease.shutdown()
+        finishCurrent()
+
+        shutdownBackstop!!.invoke()
+
+        verify(tts).shutdown()
+        assertEquals(listOf("in flight", "waiting"), spokenTexts())
     }
 
     @Test

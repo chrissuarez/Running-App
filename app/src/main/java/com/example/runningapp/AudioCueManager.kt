@@ -132,9 +132,9 @@ class AudioCueManager(
         override fun withdrawAll(tickets: Collection<Long>) = this@AudioCueManager.withdrawAll(tickets)
 
         /**
-         * The service is going away and lets go of the queue. Nothing waiting is spoken after
-         * this, which is that Run ending rather than the queue dropping a cue. The engine goes with
-         * the queue's last sentence, unless a new Run takes the queue back before then ([open]).
+         * The service is going away and lets go of the queue. Nothing enqueued after this is
+         * spoken; what was already waiting is said first, and the engine goes with the queue's
+         * last sentence, unless a new Run takes the queue back before then ([open]).
          *
          * The sentence being said when this lands is not cut off: the engine goes when that
          * sentence ends — or after [shutdownGraceMs] if the engine never reports back, which is
@@ -142,9 +142,9 @@ class AudioCueManager(
          * top of a cue is what used to truncate the last words of a run stopped from the
          * notification (#220).
          *
-         * In practice there is nothing waiting by the time this is reached, because the end of a
-         * Run takes its cues back first (`OutstandingCues`). Clearing here is the backstop for the
-         * service going away without a Run ending.
+         * The end of a Run takes its cues back first (`OutstandingCues`), so what is still waiting
+         * here was enqueued after that on purpose — the cool-down's closing line (#550). The grace
+         * period covers the whole drain, not each sentence.
          *
          * There is no session-stop counterpart. Letting go of audio focus when a Run ends used to
          * be a step of its own, because focus was held per cue and a cue could hold it after the
@@ -237,13 +237,17 @@ class AudioCueManager(
     private fun beginShutdown(lease: Lease): Settlement {
         if (isShuttingDown || lease !== holder) return Settlement()
         isShuttingDown = true
-        queue.clear()
+        // What is still waiting is said before the engine goes, not cleared (#550). A Run that
+        // ends takes its cues back on ReleaseStrap before the service gets here, so anything left
+        // was enqueued after that sweep on purpose — the cool-down's "Run finished." line, queued
+        // behind a warning already in flight. The whole goodbye stays bounded by the one
+        // [shutdownGraceMs] clock below, so a stuck engine still cannot hold destroy open.
 
         if (currentCueUtteranceId == null) {
             return Settlement(fallQuiet("service_destroy"), tearDownEngine = claimEngineTeardown())
         }
 
-        Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the sentence ends")
+        Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the queue drains")
         return Settlement(shutdownGraceFor = ++shutdownGeneration)
     }
 
@@ -267,6 +271,8 @@ class AudioCueManager(
     fun open(): Lease? {
         if (isEngineDown) return null
         if (isShuttingDown) Log.d(logTag, "Queue taken back during its last sentence")
+        // Whatever the old Run left waiting is not the new Run's to say.
+        if (isShuttingDown) queue.clear()
         isShuttingDown = false
         return Lease().also { holder = it }
     }
@@ -283,6 +289,7 @@ class AudioCueManager(
     private fun giveUpOnLastSentence(generation: Long): Settlement {
         if (isEngineDown || !isShuttingDown || generation != shutdownGeneration) return Settlement()
         currentCueUtteranceId?.let { endUtterance("shutdown_grace_expired", it) }
+        queue.clear()
         return Settlement(fallQuiet("service_destroy"), tearDownEngine = claimEngineTeardown())
     }
 
