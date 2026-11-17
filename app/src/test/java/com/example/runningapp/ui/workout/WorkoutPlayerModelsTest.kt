@@ -290,4 +290,72 @@ class WorkoutPlayerModelsTest {
         assertEquals("01:33", ui.countdownText)
         assertEquals("Main", ui.intervalLabel)
     }
+
+    // --- the next step: what comes next and how long until it does (#545) ---
+
+    private val intervalRun = HrState(
+        lifecycle = RunLifecycle.RUNNING,
+        currentPhase = SessionPhase.MAIN,
+        isStructuredWorkout = true,
+        structuredWorkoutPhase = StructuredWorkoutPhase.RUN,
+        totalRepeats = 4,
+        currentRepeat = 2,
+        phaseTimeRemainingSeconds = 45,
+        nextIntervalType = StructuredWorkoutPhase.WALK,
+        nextIntervalDurationSeconds = 90,
+        userSettings = UserSettings(maxHr = 190, targetZone = 2)
+    )
+
+    @Test
+    fun `inside an Interval the next step is the next Interval, on the screen's own countdown`() {
+        val ui = mapWorkoutPlayerUiState(intervalRun)
+        assertEquals(NextStepUi("Walk", 45), ui.nextStep)
+        assertEquals("00:45", ui.countdownText)
+
+        val walking = intervalRun.copy(
+            structuredWorkoutPhase = StructuredWorkoutPhase.WALK,
+            nextIntervalType = StructuredWorkoutPhase.RUN,
+            phaseTimeRemainingSeconds = 30
+        )
+        assertEquals(NextStepUi("Run", 30), mapWorkoutPlayerUiState(walking).nextStep)
+    }
+
+    @Test
+    fun `after the last Interval comes the cool-down`() {
+        val last = intervalRun.copy(currentRepeat = 4, nextIntervalType = null, phaseTimeRemainingSeconds = 20)
+        assertEquals(NextStepUi("Cool-down", 20), mapWorkoutPlayerUiState(last).nextStep)
+    }
+
+    @Test
+    fun `the warm-up counts down to the run`() {
+        val warmUp = intervalRun.copy(currentPhase = SessionPhase.WARM_UP, phaseSecondsRemaining = 75)
+        assertEquals(NextStepUi("Run", 75), mapWorkoutPlayerUiState(warmUp).nextStep)
+    }
+
+    @Test
+    fun `the cool-down counts down to the finish`() {
+        val coolDown = intervalRun.copy(
+            currentPhase = SessionPhase.COOL_DOWN,
+            isStructuredWorkout = false,
+            phaseSecondsRemaining = 120
+        )
+        assertEquals(NextStepUi("Finish", 120), mapWorkoutPlayerUiState(coolDown).nextStep)
+    }
+
+    @Test
+    fun `an open main Phase has no next step`() {
+        val open = intervalRun.copy(isStructuredWorkout = false, totalRepeats = 0, phaseSecondsElapsed = 600)
+        assertEquals(null, mapWorkoutPlayerUiState(open).nextStep)
+    }
+
+    @Test
+    fun `the gauge is fed the band's own heart rate and the Run's pinned target edges`() {
+        // Coach sampling, so the band is judged on the smoothed reading — and so must the needle be.
+        val state = intervalRun.copy(bpm = 131, avgBpm = 128, activeTargetZone = HrZone.MODERATE)
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals(128, ui.gaugeBpm)
+        val profile = HrProfile(190)
+        assertEquals(com.example.runningapp.zoneLowerBpm(HrZone.MODERATE, profile), ui.targetLowBpm)
+        assertEquals(com.example.runningapp.zoneUpperBpm(HrZone.MODERATE, profile), ui.targetHighBpm)
+    }
 }
