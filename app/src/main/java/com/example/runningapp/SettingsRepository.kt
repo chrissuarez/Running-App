@@ -478,6 +478,18 @@ private val PLAN_COMPLETION_DAYS = 1L..LocalDate.MAX.toEpochDay()
  * Stores a Plan the runner has finished, or takes all three keys away where there is none — the
  * whole fact in one write, which is what makes [planCompletionOf]'s read true.
  */
+/**
+ * Takes away every mark that describes run history, because that history is being replaced (#544).
+ *
+ * Run ids are the database's own auto-generated numbers, so a restored database hands them out again
+ * from where the backup left off. A Garmin-question watermark kept from the history that went would
+ * sit above those ids and silently swallow the offer for every Run until they caught up.
+ */
+internal fun MutablePreferences.clearHistoryScopedMarks() {
+    remove(PreferencesKeys.HISTORY_RECORDS_SEEDED)
+    remove(PreferencesKeys.GARMIN_POST_ASKED_THROUGH)
+}
+
 internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?) {
     // A completion missing its Plan or its day is no completion, the same reading
     // [planCompletionOf] gives. It cannot be built in Kotlin, but it can arrive: an archive is JSON
@@ -1246,6 +1258,15 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * Forgets every mark that describes the history about to be replaced (#50, #544): the seeding
+     * mark and the Garmin-question watermark. What a restore of either kind (archive or bare `.db`)
+     * calls ahead of the swap; see [clearHistoryScopedMarks].
+     */
+    suspend fun clearHistoryScopedMarks() {
+        context.dataStore.edit { it.clearHistoryScopedMarks() }
+    }
+
+    /**
      * Puts back the settings an archive was written with, beside the history from the same archive
      * (#86). Written verbatim, in one edit, and deliberately **not** through [setStatedHeartRates].
      *
@@ -1303,7 +1324,7 @@ class SettingsRepository(private val context: Context) {
             // The seeding mark describes history that has just been replaced, so it goes with it
             // (#50): the archive may have been written before the record book existed, and its runs
             // deserve the same one-off scoring any other unscored history gets at the next launch.
-            preferences.remove(PreferencesKeys.HISTORY_RECORDS_SEEDED)
+            preferences.clearHistoryScopedMarks()
             preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
             preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
             preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
