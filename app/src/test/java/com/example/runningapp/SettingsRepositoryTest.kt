@@ -862,4 +862,30 @@ class SettingsRepositoryTest {
         // A Stage without its Plan resolves to nothing anyway, and is not a place to stand.
         assertEquals(null to null, recognisedPlanAndStage(null, "base_builder"))
     }
+
+    @Test
+    fun `the floating coach is off and unplaced until the runner says otherwise`() {
+        val settings = userSettingsOf(mutablePreferencesOf())
+        assertFalse(settings.floatingCoachEnabled)
+        assertNull(settings.floatingCoachPosition)
+    }
+
+    @Test
+    fun `the floating coach comes back where it was left`() {
+        val settings = userSettingsOf(
+            mutablePreferencesOf(
+                PreferencesKeys.FLOATING_COACH_ENABLED to true,
+                PreferencesKeys.FLOATING_COACH_X to 40,
+                PreferencesKeys.FLOATING_COACH_Y to 600
+            )
+        )
+        assertTrue(settings.floatingCoachEnabled)
+        assertEquals(FloatingCoachPosition(40, 600), settings.floatingCoachPosition)
+    }
+
+    @Test
+    fun `half a position is no position`() {
+        val settings = userSettingsOf(mutablePreferencesOf(PreferencesKeys.FLOATING_COACH_X to 40))
+        assertNull(settings.floatingCoachPosition)
+    }
 }

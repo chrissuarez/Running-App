@@ -100,8 +100,17 @@ data class UserSettings(
     // one-off seeding pass has completed, and false again whenever different history arrives — see
     // [SessionRepository.seedRecordsFromHistory]. Scoring history means measuring every stored
     // track, which is minutes of work and must not happen at every launch; this is what stops it.
-    val historyRecordsSeeded: Boolean = false
+    val historyRecordsSeeded: Boolean = false,
+    // The floating coach drawn over other apps during a Run (#545). Off until the runner turns it
+    // on, and only ever on while Android also grants "Display over other apps" — this records the
+    // runner's wish, not the permission. See floating/FloatingCoach.kt.
+    val floatingCoachEnabled: Boolean = false,
+    // Where the runner last dragged it, in screen pixels; null until they have.
+    val floatingCoachPosition: FloatingCoachPosition? = null
 )
+
+/** Where the floating coach's top-left corner sits on screen, in pixels (#545). */
+data class FloatingCoachPosition(val x: Int, val y: Int)
 
 /**
  * Whether a write setting AI training data sharing to [enabled] may land.
@@ -234,6 +243,10 @@ internal object PreferencesKeys {
     // Whether the history already recorded has been scored against the record book (#50). See
     // UserSettings.historyRecordsSeeded.
     val HISTORY_RECORDS_SEEDED = booleanPreferencesKey("history_records_seeded")
+    // The floating coach (#545). See UserSettings.floatingCoachEnabled.
+    val FLOATING_COACH_ENABLED = booleanPreferencesKey("floating_coach_enabled")
+    val FLOATING_COACH_X = intPreferencesKey("floating_coach_x")
+    val FLOATING_COACH_Y = intPreferencesKey("floating_coach_y")
 }
 
 /** [maxHrEverSet], read from storage. */
@@ -805,8 +818,17 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
         testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
         backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
         lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT],
-        historyRecordsSeeded = preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED] ?: false
+        historyRecordsSeeded = preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED] ?: false,
+        floatingCoachEnabled = preferences[PreferencesKeys.FLOATING_COACH_ENABLED] ?: false,
+        floatingCoachPosition = floatingCoachPositionOf(preferences)
     )
+}
+
+/** Both halves or neither: the pair is written in one edit, so half of one is not a place. */
+private fun floatingCoachPositionOf(preferences: Preferences): FloatingCoachPosition? {
+    val x = preferences[PreferencesKeys.FLOATING_COACH_X] ?: return null
+    val y = preferences[PreferencesKeys.FLOATING_COACH_Y] ?: return null
+    return FloatingCoachPosition(x, y)
 }
 
 class SettingsRepository(private val context: Context) {
@@ -905,6 +927,17 @@ class SettingsRepository(private val context: Context) {
         put(PreferencesKeys.TURNAROUND_CUE_ENABLED, enabled)
 
     suspend fun setAutoPauseEnabled(enabled: Boolean) = put(PreferencesKeys.AUTO_PAUSE_ENABLED, enabled)
+
+    suspend fun setFloatingCoachEnabled(enabled: Boolean) =
+        put(PreferencesKeys.FLOATING_COACH_ENABLED, enabled)
+
+    /** Both halves in one edit, so no reader ever sees the box half moved. */
+    suspend fun setFloatingCoachPosition(position: FloatingCoachPosition) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.FLOATING_COACH_X] = position.x
+            preferences[PreferencesKeys.FLOATING_COACH_Y] = position.y
+        }
+    }
 
     /**
      * Guarded by [aiSharingChangeAllowed]. [setTestingModeEnabled] forces sharing off, but that
