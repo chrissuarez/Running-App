@@ -65,6 +65,18 @@ the work spun off, re-count the columns, and republish to the same `url` above.
 Between refreshes the roadmap only has to name the next few tickets — it is a plan, not a live
 mirror of the tracker.
 
+### Software factory
+
+`/factory run` builds every open GitHub issue labelled `factory` (and only those) through
+intake → spec → build → gate → review → codex → approve, one PR per issue, rebase-merged by the
+approver. `/factory run <n>` runs one issue. State lives in `factory/jobs/` (gitignored);
+`factory/bin/job` is its only writer, `factory/config.json` holds the routing, and the gate runs
+`factory/checks.sh` (JVM unit tests only — never connected tests). Each job works in its own
+worktree under `.worktrees/<job-id>` (gitignored), with `local.properties` copied in. Dashboard:
+`cd factory && python3 -m http.server`, then open http://localhost:8000/dashboard.html. Merged
+user-visible PRs carry a phone checklist comment; the phone test and the handbook republish stay
+Chris's.
+
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
