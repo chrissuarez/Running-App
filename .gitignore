@@ -34,3 +34,7 @@
 
 # Local notes/knowledge docs
 /knowledge/
+
+# Software factory runtime state and job worktrees
+/factory/jobs/
+/.worktrees/
