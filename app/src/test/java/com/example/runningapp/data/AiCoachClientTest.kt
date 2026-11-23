@@ -551,6 +551,38 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `with a ceiling the coach is told the limit, the envelope and what is left for the main set`() {
+        val prompt = promptFor(
+            oneRunWalkSession.copy(
+                stageWorkout = longRunWorkout.copy(warmUpSeconds = 300, coolDownSeconds = 240),
+                ceilingSeconds = 2000L
+            )
+        )
+
+        assertTrue(prompt.contains("2000 seconds"))
+        assertTrue(prompt.contains("warm-up is 300s"))
+        assertTrue(prompt.contains("cool-down is 240s"))
+        assertTrue(prompt.contains("includes the warm-up and the cool-down"))
+        assertTrue(prompt.contains("at most 1460 seconds"))
+        assertTrue(prompt.contains("trimmed"))
+    }
+
+    @Test
+    fun `with no ceiling the prompt says nothing of a ceiling or the envelope`() {
+        val prompt = promptFor(
+            oneRunWalkSession.copy(
+                stageWorkout = longRunWorkout.copy(warmUpSeconds = 300, coolDownSeconds = 240),
+                ceilingSeconds = null
+            )
+        )
+
+        assertFalse(prompt.contains("may last at most"))
+        assertFalse(prompt.contains("warm-up is"))
+        assertFalse(prompt.contains("300s"))
+        assertFalse(prompt.contains("240s"))
+    }
+
+    @Test
     fun `keeping the Workout as it is is a sayable answer`() {
         val prompt = promptFor(oneRunWalkSession.copy(stageWorkout = longRunWorkout))
 

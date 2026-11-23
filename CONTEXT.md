@@ -767,6 +767,12 @@ the Stage's own Workout only when nothing is left standing
 ([ADR 0013](docs/adr/0013-a-prescription-stands-on-the-runs-it-was-shown.md)).
 _Avoid_: AI adjustments, AI intervals
 
+**Ceiling**:
+The most total time the next Run's Prescription may come to: 110% of the longest Run in the last
+30 days, warm-up and cool-down included. None with no recent history. The coach is told it in the
+briefing, and the app trims any Prescription over it.
+_Avoid_: cap, limit
+
 **Strap**:
 The Bluetooth heart-rate sensor worn on the chest. A sensor the Run reads, not a
 gate the Run waits on. What it says is averaged over five seconds before the
