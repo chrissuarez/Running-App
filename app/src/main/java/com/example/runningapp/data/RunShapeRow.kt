@@ -230,7 +230,7 @@ const val SHAPED_RUNS_SQL: String =
                s.avgPaceMinPerKm AS avgPaceMinPerKm
         FROM run_shapes r
         JOIN sessions s ON s.id = r.sessionId
-        WHERE r.shape IS NOT NULL
+        WHERE r.shape IS NOT NULL AND s.isSimulationRun = 0
         ORDER BY s.startTime ASC
     """
 
@@ -251,6 +251,6 @@ const val SHAPED_RUNS_ON_COURSES_SQL: String =
                r.distanceMeters AS shapeDistanceMeters
         FROM run_shapes r
         JOIN sessions s ON s.id = r.sessionId
-        WHERE r.shape IS NOT NULL AND s.endTime > 0
+        WHERE r.shape IS NOT NULL AND s.endTime > 0 AND s.isSimulationRun = 0
         ORDER BY s.startTime DESC
     """

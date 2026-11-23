@@ -265,6 +265,12 @@ fun SessionItem(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 WalkMarker()
                             }
+                            // Beside the date for the Walk's reason: it is what the Run was, and it
+                            // is why it counts toward nothing (#560).
+                            if (session.isSimulationRun) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                SimulationRunMarker()
+                            }
                             MedalBadge(medals = row.medals)
                         }
                     },

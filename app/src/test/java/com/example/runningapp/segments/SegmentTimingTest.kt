@@ -45,7 +45,13 @@ class SegmentTimingTest {
         )
     }
 
-    private fun aRun(id: Long, isWalk: Boolean = false, runMode: String = "outdoor", finished: Boolean = true) =
+    private fun aRun(
+        id: Long,
+        isWalk: Boolean = false,
+        runMode: String = "outdoor",
+        finished: Boolean = true,
+        isSimulationRun: Boolean = false,
+    ) =
         RunnerSession(
             id = id,
             startTime = 1_700_000_000_000L,
@@ -53,6 +59,7 @@ class SegmentTimingTest {
             durationSeconds = 100,
             runMode = runMode,
             isWalk = isWalk,
+            isSimulationRun = isSimulationRun,
         )
 
     /**
@@ -169,6 +176,15 @@ class SegmentTimingTest {
     @Test
     fun `a Walk holds no efforts`() = runTest {
         val book = book(listOf(aRun(1, isWalk = true)))
+
+        SegmentTiming(book).timeAgainstHistory(segment.id)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Simulation Run holds no efforts`() = runTest {
+        val book = book(listOf(aRun(1, isSimulationRun = true)))
 
         SegmentTiming(book).timeAgainstHistory(segment.id)
 

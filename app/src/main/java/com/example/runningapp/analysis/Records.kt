@@ -134,6 +134,8 @@ fun bestEffortsOf(
 ): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
     if (run.isWalk) return emptyList()
+    // Nothing a Simulation Run holds was run (#560), so it contests no record, measured or stated.
+    if (run.isSimulationRun) return emptyList()
     val treadmill = run.isTreadmill()
     // Two fixes is the least a route can be: one fix says only where the Run started.
     val hasRoute = !treadmill && track.size >= 2

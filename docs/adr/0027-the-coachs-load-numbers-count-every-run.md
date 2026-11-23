@@ -31,7 +31,8 @@ totals as they are, accepting this risk, to keep the coach's full picture of loa
   the full picture of load.
 - **Stop sending the weekly totals.** Rejected by Chris's choice, for the same reason.
 
-## What stays open
+## Simulation Runs
 
-Whether Simulation Runs should count towards the curves at all. It affects the Progress screen too,
-so it is its own ticket.
+Settled by #560: a Simulation Run is kept in History but counts toward nothing, so "every Run" here
+means every real Run. It is out of the curve, the weekly totals and every other count, and it is
+never AI-eligible.

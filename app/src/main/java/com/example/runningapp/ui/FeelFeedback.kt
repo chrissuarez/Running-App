@@ -131,7 +131,18 @@ fun WalkSwitch(
  * way to see which ones have already been done short of opening every one.
  */
 @Composable
-fun WalkMarker(modifier: Modifier = Modifier) {
+fun WalkMarker(modifier: Modifier = Modifier) = OutingMarker(text = "Walk", modifier = modifier)
+
+/**
+ * The small badge that says a Run is a Simulation Run (#560) — [WalkMarker]'s look, on the same two
+ * screens. "Test" is only the words on screen; the Run is a Simulation Run everywhere else.
+ */
+@Composable
+fun SimulationRunMarker(modifier: Modifier = Modifier) =
+    OutingMarker(text = "Test", modifier = modifier)
+
+@Composable
+private fun OutingMarker(text: String, modifier: Modifier) {
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
@@ -139,7 +150,7 @@ fun WalkMarker(modifier: Modifier = Modifier) {
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
         Text(
-            text = "Walk",
+            text = text,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             maxLines = 1,

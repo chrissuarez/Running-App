@@ -815,3 +815,10 @@ _Avoid_: log, logging, telemetry, audit trail
 A developer mode that feeds fake heart rate in place of a Strap, so the app can
 be exercised without hardware.
 _Avoid_: demo mode, test mode, fake mode
+
+**Simulation Run**:
+A Run recorded with **Simulation** on when it started. It is kept in History and
+can be opened and deleted, is tagged "Test" on screen, counts toward nothing
+(Fitness, Fatigue, Form, weekly totals, records, Goals, Stages, leaderboards)
+and is never AI-eligible. Not a Stage's **Test**: "Test" is only the tag's words.
+_Avoid_: test run, demo run, fake run

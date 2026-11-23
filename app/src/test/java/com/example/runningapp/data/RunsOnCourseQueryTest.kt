@@ -55,7 +55,8 @@ class RunsOnCourseQueryTest {
                 durationSeconds INTEGER NOT NULL,
                 movingTimeSeconds INTEGER,
                 distanceKm REAL NOT NULL,
-                isWalk INTEGER NOT NULL
+                isWalk INTEGER NOT NULL,
+                isSimulationRun INTEGER NOT NULL DEFAULT 0
             )
             """
         )

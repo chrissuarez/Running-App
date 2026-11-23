@@ -3316,6 +3316,21 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Simulation Run that cleared the bar settles its Stage without judging it`() = runTest {
+        // A Simulation Run counts toward nothing (#560), and the finish settles it directly rather
+        // than through the launch pass's list: the bar it cleared must still graduate nothing.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isSimulationRun = true))
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
     fun `the Walk marked on the finish sheet reaches the rule`() = runTest {
         // The defect this ticket is about (#297): the Run cleared the bar as it ended, and the
         // runner then said it was a walk. A Walk holds no Best Effort, so it graduates nothing —

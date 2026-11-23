@@ -42,7 +42,8 @@ class MatchedRunsQueryTest {
                 ranAtUtcOffsetSeconds INTEGER,
                 durationSeconds INTEGER NOT NULL,
                 movingTimeSeconds INTEGER,
-                avgPaceMinPerKm REAL NOT NULL
+                avgPaceMinPerKm REAL NOT NULL,
+                isSimulationRun INTEGER NOT NULL DEFAULT 0
             )
             """
         )

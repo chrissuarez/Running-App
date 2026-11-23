@@ -1017,6 +1017,7 @@ class HrForegroundService : Service() {
                     targetZone = effect.targetZoneNumber,
                     runMode = effect.runModeSettingValue,
                     includeInAiTraining = effect.includeInAiTraining,
+                    isSimulationRun = effect.isSimulationRun,
                     // The Reserve this Run is being recorded under, written down with the Run
                     // rather than left to be guessed at afterwards (#228).
                     bandedOnMaxHr = effect.hrProfile.maxHr,
@@ -1432,6 +1433,8 @@ class HrForegroundService : Service() {
             runMode = runMode,
             workout = workout,
             includeInAiTraining = settings.aiDataSharingEnabled && !settings.testingModeEnabled,
+            // Read here, beside everything else START pins, and not when the row is written (#560).
+            isSimulationRun = isSimulationEnabled,
             // The Stage in force as START was pressed, which is the Stage this Run is evidence for
             // whatever happens to the plan while it runs (#234). Not conditioned on the Workout:
             // a Run that skipped today's plan was still run under the Stage the runner is in, and

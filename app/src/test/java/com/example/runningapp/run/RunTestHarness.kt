@@ -49,6 +49,7 @@ internal fun config(
     hrProfile: HrProfile = HrProfile(190),
     targetZone: HrZone = HrZone.MODERATE,
     includeInAiTraining: Boolean = true,
+    isSimulationRun: Boolean = false,
     ranUnderStageId: String? = "base_builder",
     route: RunRoute? = null,
 ) = RunConfig(
@@ -57,6 +58,7 @@ internal fun config(
     runMode = runMode,
     workout = workout,
     includeInAiTraining = includeInAiTraining,
+    isSimulationRun = isSimulationRun,
     ranUnderStageId = ranUnderStageId,
     route = route,
 )

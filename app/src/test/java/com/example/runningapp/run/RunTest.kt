@@ -93,6 +93,32 @@ class RunStartTest {
     }
 
     @Test
+    fun `a run started under Simulation is a Simulation Run on its row, and never shared`() {
+        // Pinned at START with the rest of the config (#560): Simulate toggled while START is still
+        // queued must not change what the Run set out as.
+        val driver = Driver()
+
+        val effects = driver.on(
+            RunEvent.Started(config(isSimulationRun = true, includeInAiTraining = true), RunControls(), T0)
+        )
+
+        val create = effects.only<RunEffect.CreateRunRow>()
+        assertTrue(create.isSimulationRun)
+        assertFalse(create.includeInAiTraining)
+    }
+
+    @Test
+    fun `a real run keeps its sharing as configured`() {
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.Started(config(includeInAiTraining = true), RunControls(), T0))
+
+        val create = effects.only<RunEffect.CreateRunRow>()
+        assertFalse(create.isSimulationRun)
+        assertTrue(create.includeInAiTraining)
+    }
+
+    @Test
     fun `a run started with no plan attached is evidence for no Stage`() {
         val driver = Driver()
 

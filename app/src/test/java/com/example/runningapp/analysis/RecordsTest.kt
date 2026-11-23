@@ -209,6 +209,16 @@ class RecordsTest {
     }
 
     @Test
+    fun `a Simulation Run contests nothing at all`() {
+        val track = script { running(speedMps = 3.0, seconds = 400) } // 1.2 km
+        val ran = anOutdoorRun(distanceKm = 1.2)
+
+        // The same Run, recorded with Simulation on: nothing it holds was run (#560).
+        assertTrue(bestEffortsOf(ran, track).isNotEmpty())
+        assertEquals(emptyList<BestEffort>(), bestEffortsOf(ran.copy(isSimulationRun = true), track))
+    }
+
+    @Test
     fun `a Walk does not take the longest time either`() {
         // The record a slow hour on foot is likeliest of all to take, so the one worth naming: the
         // rule is every record, not only the ones measured off a route.

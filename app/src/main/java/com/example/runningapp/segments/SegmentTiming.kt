@@ -253,15 +253,19 @@ class SegmentTiming(private val store: SegmentTimingStore) {
  * - **A treadmill Run holds nothing.** It has no track, so there is no ground to put to a Segment;
  *   and unlike a Best Effort there is nothing a runner could state instead, because a console cannot
  *   know it was on the runner's hill.
+ * - **A Simulation Run holds nothing** (#560). Its numbers were made up, and it is fixed at START,
+ *   so unlike a Walk it never changes after the Run is measured.
  */
-fun RunnerSession.mayHoldSegmentEfforts(): Boolean = isFinished() && !isWalk && !isTreadmill()
+fun RunnerSession.mayHoldSegmentEfforts(): Boolean =
+    isFinished() && !isWalk && !isTreadmill() && !isSimulationRun
 
 /**
  * Whether two readings of the same Run would be worth the same at a Segment — everything the timing
  * decides by, and nothing else (#338, #343).
  *
- * The three things [mayHoldSegmentEfforts] asks, because those are the three that can turn a Run's
- * efforts into no efforts or back: a Run finishing, being marked a Walk, becoming a treadmill Run.
+ * The three things [mayHoldSegmentEfforts] asks that can change after START, because those are the
+ * three that can turn a Run's efforts into no efforts or back: a Run finishing, being marked a Walk,
+ * becoming a treadmill Run.
  * A feel, a note or an Effort Score written while a track is being measured moves no waypoint and is
  * therefore no reason to throw a measurement away.
  *

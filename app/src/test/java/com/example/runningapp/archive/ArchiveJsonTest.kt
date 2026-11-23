@@ -96,6 +96,27 @@ class ArchiveJsonTest {
     }
 
     @Test
+    fun `a Simulation Run is still one after a lost phone`() {
+        val simulated = RunnerSession(id = 7, startTime = 1_753_800_000_000, isSimulationRun = true)
+
+        val restored = ArchiveJson.read(ArchiveJson.write(document(runs = listOf(simulated))))
+
+        assertEquals(true, restored?.runs?.single()?.isSimulationRun)
+    }
+
+    @Test
+    fun `an archive written before Simulation Runs were marked restores every Run as real`() {
+        // Nothing on an older archive's Runs says Simulation was on, and none is guessed (#560).
+        val run = RunnerSession(id = 7, startTime = 1)
+        val withoutTheField = ArchiveJson.write(document(runs = listOf(run)))
+            .lines()
+            .filterNot { it.contains("isSimulationRun") }
+            .joinToString("\n")
+
+        assertEquals(false, ArchiveJson.read(withoutTheField)?.runs?.single()?.isSimulationRun)
+    }
+
+    @Test
     fun `an archive written before the card existed says it was never put away`() {
         // The one-time card is newer than the archive format. A document without the field is a
         // phone that was never asked, which is exactly what false means here — and the only
