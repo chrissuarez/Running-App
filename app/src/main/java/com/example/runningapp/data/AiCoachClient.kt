@@ -411,6 +411,10 @@ private fun String.s(count: Int): String = if (count == 1) this else this + "s"
  * a figure with no rule attached to it, a model is left to invent one. With no ceiling there is no
  * rule to attach, so neither is sent.
  *
+ * The floor outranks the ceiling, so a ceiling below the Workout's own total never shortens the
+ * run; the coach is told so beside the ceiling, or it explains a shortened Prescription nobody
+ * gets (#557).
+ *
  * Last, and said as hard as the fatigue block says its own version: this is the plan's intention,
  * never a record of anything the runner did. A Workout read as evidence would graduate a Stage on
  * the strength of numbers nobody ran — and a graduation cannot be taken back.
@@ -441,6 +445,11 @@ private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate, ceilingSe
                 "them. That total includes the warm-up and the cool-down, so the main set " +
                 "(repeats × (run + walk)) may use at most ${(ceilingSeconds - warmUp - coolDown).coerceAtLeast(0)} " +
                 "seconds. Anything over is trimmed by the app."
+        )
+        appendLine(
+            "Remember that the floor wins over the ceiling: if the ceiling is below the workout's " +
+                "own total, the prescription is the full workout, so never describe a shortened run, explain " +
+                "one or promise one."
         )
     }
     appendLine(
