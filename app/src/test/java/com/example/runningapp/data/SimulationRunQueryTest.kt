@@ -108,7 +108,9 @@ class SimulationRunQueryTest {
     private fun Connection.column(sql: String, name: String?): List<Long> =
         createStatement().use { statement ->
             statement.executeQuery(sql).use { rows ->
-                buildList { while (rows.next()) add(if (name == null) rows.getLong(1) else rows.getLong(name)) }
+                buildList {
+                    while (rows.next()) add(if (name == null) rows.getLong(1) else rows.getLong(name))
+                }
             }
         }
 

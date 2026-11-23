@@ -138,7 +138,8 @@ fun WalkMarker(modifier: Modifier = Modifier) = OutingMarker(text = "Walk", modi
  * screens. "Test" is only the words on screen; the Run is a Simulation Run everywhere else.
  */
 @Composable
-fun SimulationRunMarker(modifier: Modifier = Modifier) = OutingMarker(text = "Test", modifier = modifier)
+fun SimulationRunMarker(modifier: Modifier = Modifier) =
+    OutingMarker(text = "Test", modifier = modifier)
 
 @Composable
 private fun OutingMarker(text: String, modifier: Modifier) {

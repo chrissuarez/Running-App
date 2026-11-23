@@ -89,7 +89,8 @@ object Run {
                     targetZoneNumber = event.config.targetZone.number,
                     runModeSettingValue = event.config.runMode.settingValue,
                     // A Simulation Run is never AI-eligible, whatever the sharing setting says (#560).
-                    includeInAiTraining = event.config.includeInAiTraining && !event.config.isSimulationRun,
+                    includeInAiTraining =
+                        event.config.includeInAiTraining && !event.config.isSimulationRun,
                     isSimulationRun = event.config.isSimulationRun,
                     hrProfile = event.config.hrProfile,
                     ranUnderStageId = event.config.ranUnderStageId,

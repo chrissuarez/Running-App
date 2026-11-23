@@ -136,23 +136,28 @@ const val RUN_VOLUMES_SQL = """
 
 /** The read behind [SessionDao.getSessionIdsMissingRecordScoring] — see [SCORED_RUNS_SQL]. */
 const val RUNS_OWING_RECORD_SCORING_SQL =
-    "SELECT id FROM sessions WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0 ORDER BY startTime ASC"
+    "SELECT id FROM sessions WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0 " +
+        "ORDER BY startTime ASC"
 
 /** The read behind [SessionDao.anyRecordScoringOwedFlow] — see [SCORED_RUNS_SQL]. */
 const val ANY_RECORD_SCORING_OWED_SQL =
-    "SELECT EXISTS(SELECT 1 FROM sessions WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0)"
+    "SELECT EXISTS(SELECT 1 FROM sessions " +
+        "WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0)"
 
 /** The read behind [SessionDao.getSessionIdsMissingSegmentTiming] — see [SCORED_RUNS_SQL]. */
 const val RUNS_OWING_SEGMENT_TIMING_SQL =
-    "SELECT id FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0 ORDER BY startTime ASC"
+    "SELECT id FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0 " +
+        "ORDER BY startTime ASC"
 
 /** The read behind [SessionDao.anySegmentTimingOwedFlow] — see [SCORED_RUNS_SQL]. */
 const val ANY_SEGMENT_TIMING_OWED_SQL =
-    "SELECT EXISTS(SELECT 1 FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0)"
+    "SELECT EXISTS(SELECT 1 FROM sessions " +
+        "WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0)"
 
 /** The read behind [SessionDao.getAiEligibleIdsIn] — see [SCORED_RUNS_SQL]. */
 const val AI_ELIGIBLE_IDS_IN_SQL =
-    "SELECT id FROM sessions WHERE id IN (:sessionIds) AND includeInAiTraining = 1 AND isSimulationRun = 0"
+    "SELECT id FROM sessions " +
+        "WHERE id IN (:sessionIds) AND includeInAiTraining = 1 AND isSimulationRun = 0"
 
 /**
  * The Runs the launch pass owes a Stage settlement — see [SessionDao.getSessionIdsOwingStageSettlement].
