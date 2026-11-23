@@ -497,6 +497,12 @@ data class AiTrainingContext(
      */
     val stageWorkout: WorkoutTemplate? = null,
     /**
+     * The most total seconds the next Run may last — the Ceiling, finished, not the 30-day maximum
+     * it comes from. Warm-up and cool-down count towards it. Null when there is no recent history
+     * to set one from, and wherever [stageWorkout] is null: the prompt then says nothing of it.
+     */
+    val ceilingSeconds: Long? = null,
+    /**
      * The runner's own standing Goals and where they stand against them (#82, #83), in the order
      * they were set. Empty where they have set none, and the prompt then says nothing about goals
      * at all rather than saying there are none — a runner who has never used the feature is not a
@@ -3422,6 +3428,17 @@ class SessionRepository(
     }
 
     /**
+     * The Ceiling: the most total seconds the next Run's Prescription may come to, 110% of the
+     * longest Run in the last 30 days. Null with no recent history. The one place the rule lives,
+     * so the briefing the coach reads and the trim that follows it cannot disagree.
+     */
+    suspend fun recentLoadCeilingSeconds(): Long? {
+        val maxDurationSeconds = getMaxSessionLoadLast30Days().maxDurationSeconds
+        if (maxDurationSeconds <= 0L) return null
+        return floor(maxDurationSeconds.toDouble() * 1.10).toLong()
+    }
+
+    /**
      * The Run that has just finished, carrying the weather it was run in — fetched here and now
      * where the after-run work has not got to it yet (#79, #83).
      *
@@ -3664,6 +3681,7 @@ class SessionRepository(
                     )
             ),
             stageWorkout = stageWorkout,
+            ceilingSeconds = stageWorkout?.let { recentLoadCeilingSeconds() },
             goals = goalProgress,
             stageTraining = stageTraining,
             // Only the Runs the record kept: one dated beyond any clock's today is dropped from the
@@ -5280,14 +5298,12 @@ class SessionRepository(
     ): AiCoachResponse {
         val warmupSeconds = warmUpSeconds.coerceAtLeast(0)
         val cooldownSeconds = coolDownSeconds.coerceAtLeast(0)
-        val max30d = getMaxSessionLoadLast30Days()
-        if (max30d.maxDurationSeconds <= 0L) return response
+        val allowedTotalSeconds = recentLoadCeilingSeconds() ?: return response
 
         val safeWalkSeconds = response.nextWalkDurationSeconds.coerceAtLeast(0)
         val safeRepeats = response.nextRepeats.coerceAtLeast(1)
         val safeRunSeconds = response.nextRunDurationSeconds.coerceAtLeast(1)
 
-        val allowedTotalSeconds = floor(max30d.maxDurationSeconds.toDouble() * 1.10).toLong()
         val proposedTotalSeconds = computePlannedTotalSeconds(
             runSeconds = safeRunSeconds,
             walkSeconds = safeWalkSeconds,

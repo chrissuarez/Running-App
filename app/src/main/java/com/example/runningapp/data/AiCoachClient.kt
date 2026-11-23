@@ -262,7 +262,7 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"nextTargetZone\": Int (optional, 1-5),")
     appendLine("  \"coachMessage\": String")
     appendLine("}")
-    context.stageWorkout?.let { appendStageWorkout(it) }
+    context.stageWorkout?.let { appendStageWorkout(it, context.ceilingSeconds) }
     context.fitnessAndForm?.let { appendFitnessAndForm(it) }
     appendGoals(context.goals)
     appendStageTraining(context.stageTraining)
@@ -406,16 +406,16 @@ private fun String.s(count: Int): String = if (count == 1) this else this + "s"
  * coach free to satisfy it the way the floor exists to refuse — six 30s runs padded out with long
  * walks matching a six-by-three-minute Workout second for second on a sixth of the running.
  *
- * The warm-up and cool-down are deliberately not sent. The schema has no field for either, so they
- * are two numbers the coach could not act on — and the one rule that counts them, the 110% ceiling,
- * is not described here at all. Handed a figure with no rule attached to it, a model is left to
- * invent one.
+ * The warm-up and cool-down are sent only together with the ceiling (#249), the one rule that counts
+ * them. The schema has no field for either, so they are fixed facts the coach does not set; handed
+ * a figure with no rule attached to it, a model is left to invent one. With no ceiling there is no
+ * rule to attach, so neither is sent.
  *
  * Last, and said as hard as the fatigue block says its own version: this is the plan's intention,
  * never a record of anything the runner did. A Workout read as evidence would graduate a Stage on
  * the strength of numbers nobody ran — and a graduation cannot be taken back.
  */
-private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
+private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate, ceilingSeconds: Long?) {
     appendLine(
         "The stage's own workout for this kind of run, which is what your intervals adjust: " +
             "${workout.runDurationSeconds}s of running then ${workout.walkDurationSeconds}s of " +
@@ -432,6 +432,17 @@ private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
             "less than the workout's own, your intervals are discarded and the workout's three " +
             "numbers stand — so a shorter run interval cannot be bought back with a longer walk."
     )
+    if (ceilingSeconds != null) {
+        val warmUp = workout.warmUpSeconds.coerceAtLeast(0)
+        val coolDown = workout.coolDownSeconds.coerceAtLeast(0)
+        appendLine(
+            "The next run may last at most $ceilingSeconds seconds in total. The workout's warm-up " +
+                "is ${warmUp}s and its cool-down is ${coolDown}s; both are fixed and you do not set " +
+                "them. That total includes the warm-up and the cool-down, so the main set " +
+                "(repeats × (run + walk)) may use at most ${(ceilingSeconds - warmUp - coolDown).coerceAtLeast(0)} " +
+                "seconds. Anything over is trimmed by the app."
+        )
+    }
     appendLine(
         "CRITICAL RULE: this workout is the plan's intention, not a record of anything the runner " +
             "did. It is what you prescribe against, and never evidence about any run."

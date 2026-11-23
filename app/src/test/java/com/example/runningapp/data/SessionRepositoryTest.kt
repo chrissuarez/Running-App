@@ -142,6 +142,62 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the ceiling is 110 percent of the longest Run in 30 days, rounded down`() = runTest {
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 5.0, maxDurationSeconds = 1801L)
+        )
+
+        assertEquals(1981L, repository.recentLoadCeilingSeconds())
+    }
+
+    @Test
+    fun `there is no ceiling without a Run in the last 30 days`() = runTest {
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+
+        assertNull(repository.recentLoadCeilingSeconds())
+    }
+
+    @Test
+    fun `the context reports the same ceiling the clamp trims to`() = runTest {
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 5.0, maxDurationSeconds = 2000L)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+
+        val context = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            stageWorkout = introIntervals
+        )
+        val clamped = repository.clampAiResponseByRecentLoad(
+            AiCoachResponse(
+                nextRunDurationSeconds = 180,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 10,
+                coachMessage = "Go long."
+            ),
+            warmUpSeconds = 300,
+            coolDownSeconds = 180
+        )
+        val clampedTotal = 300 + (clamped.nextRunDurationSeconds + clamped.nextWalkDurationSeconds) *
+            clamped.nextRepeats + 180
+
+        assertEquals(2200L, context.ceilingSeconds)
+        assertTrue(clampedTotal <= context.ceilingSeconds!!)
+    }
+
+    @Test
+    fun `outside a finish the context carries no ceiling`() = runTest {
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 5.0, maxDurationSeconds = 2000L)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+
+        assertNull(repository.getAiTrainingContext("sub_30_bridge").ceilingSeconds)
+    }
+
+    @Test
     fun `clampAiResponse does not change values if within budget`() = runTest {
         // Budget = 3000 * 1.1 = 3300s
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
