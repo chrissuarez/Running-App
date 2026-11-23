@@ -63,7 +63,8 @@ class SettleRunRowQueryTest {
                 isWalk INTEGER NOT NULL DEFAULT 0,
                 perceivedEffort INTEGER,
                 sessionNote TEXT,
-                bandedOnMaxHr INTEGER
+                bandedOnMaxHr INTEGER,
+                isSimulationRun INTEGER NOT NULL DEFAULT 0
             )
             """
         )

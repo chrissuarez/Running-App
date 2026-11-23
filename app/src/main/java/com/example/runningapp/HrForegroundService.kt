@@ -1005,6 +1005,10 @@ class HrForegroundService : Service() {
             effect.startedAtMillis,
             ZoneId.systemDefault(),
         )
+        // Whether Simulation was on as START was pressed (#560), read here for the same reason: the
+        // Run is a Simulation Run for what it set out as, and Simulate toggled before the write gets
+        // a thread must not change that.
+        val isSimulationRun = isSimulationEnabled
         // Not through [recordForTheRun], and so not refused by the teardown gate (#315). Every other
         // write adds to a Run that exists; this one is the Run existing, and refusing it would cost
         // a Run its whole recording rather than its last second. It cannot in fact be reached after
@@ -1016,7 +1020,9 @@ class HrForegroundService : Service() {
                     startTime = effect.startedAtMillis,
                     targetZone = effect.targetZoneNumber,
                     runMode = effect.runModeSettingValue,
-                    includeInAiTraining = effect.includeInAiTraining,
+                    // A Simulation Run is never AI-eligible, whatever the sharing setting says.
+                    includeInAiTraining = effect.includeInAiTraining && !isSimulationRun,
+                    isSimulationRun = isSimulationRun,
                     // The Reserve this Run is being recorded under, written down with the Run
                     // rather than left to be guessed at afterwards (#228).
                     bandedOnMaxHr = effect.hrProfile.maxHr,

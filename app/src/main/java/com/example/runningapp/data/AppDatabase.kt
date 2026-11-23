@@ -116,6 +116,45 @@ const val REMEMBER_RUN_ALONG_ROUTE =
         "WHERE id = :sessionId AND ranAlongRouteId IS NULL"
 
 /**
+ * The reads a Simulation Run must stay out of (#560), named here rather than written inline so
+ * `SimulationRunQueryTest` can put the very statements the DAO runs to a real engine — the same
+ * reason as [RUNS_OWING_A_STAGE_SETTLEMENT] below. See each [SessionDao] query for what it feeds.
+ */
+const val SCORED_RUNS_SQL = """
+    SELECT startTime, effortScore, isWalk, ranAtUtcOffsetSeconds FROM sessions
+    WHERE endTime > 0 AND effortScore IS NOT NULL AND isSimulationRun = 0
+    ORDER BY startTime ASC
+"""
+
+/** The read behind [SessionDao.getRunVolumesFlow] — see [SCORED_RUNS_SQL]. */
+const val RUN_VOLUMES_SQL = """
+    SELECT startTime, distanceKm, durationSeconds, movingTimeSeconds, effortScore,
+           ranAtUtcOffsetSeconds FROM sessions
+    WHERE endTime > 0 AND isSimulationRun = 0
+    ORDER BY startTime ASC
+"""
+
+/** The read behind [SessionDao.getSessionIdsMissingRecordScoring] — see [SCORED_RUNS_SQL]. */
+const val RUNS_OWING_RECORD_SCORING_SQL =
+    "SELECT id FROM sessions WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0 ORDER BY startTime ASC"
+
+/** The read behind [SessionDao.anyRecordScoringOwedFlow] — see [SCORED_RUNS_SQL]. */
+const val ANY_RECORD_SCORING_OWED_SQL =
+    "SELECT EXISTS(SELECT 1 FROM sessions WHERE recordsScored = 0 AND endTime > 0 AND isSimulationRun = 0)"
+
+/** The read behind [SessionDao.getSessionIdsMissingSegmentTiming] — see [SCORED_RUNS_SQL]. */
+const val RUNS_OWING_SEGMENT_TIMING_SQL =
+    "SELECT id FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0 ORDER BY startTime ASC"
+
+/** The read behind [SessionDao.anySegmentTimingOwedFlow] — see [SCORED_RUNS_SQL]. */
+const val ANY_SEGMENT_TIMING_OWED_SQL =
+    "SELECT EXISTS(SELECT 1 FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 AND isSimulationRun = 0)"
+
+/** The read behind [SessionDao.getAiEligibleIdsIn] — see [SCORED_RUNS_SQL]. */
+const val AI_ELIGIBLE_IDS_IN_SQL =
+    "SELECT id FROM sessions WHERE id IN (:sessionIds) AND includeInAiTraining = 1 AND isSimulationRun = 0"
+
+/**
  * The Runs the launch pass owes a Stage settlement — see [SessionDao.getSessionIdsOwingStageSettlement].
  *
  * Named here rather than written inline so the test that proves what the mark does can run the very
@@ -125,7 +164,8 @@ const val REMEMBER_RUN_ALONG_ROUTE =
  * nobody asks (#383).
  */
 const val RUNS_OWING_A_STAGE_SETTLEMENT =
-    "SELECT id FROM sessions WHERE stageSettled = 0 AND endTime > 0 ORDER BY startTime ASC"
+    "SELECT id FROM sessions WHERE stageSettled = 0 AND endTime > 0 AND isSimulationRun = 0 " +
+        "ORDER BY startTime ASC"
 
 /**
  * Reopen a Run's Stage question, for the one settler that can know the mark on it was never a
@@ -404,6 +444,15 @@ data class RunnerSession(
      * the record book's mend ([SessionRepository.markAsWalk]).
      */
     val isWalk: Boolean = false,
+    /**
+     * Whether Simulation was on when this Run started (#560) — a **Simulation Run**.
+     *
+     * Fixed at START and never moved: Simulate toggled mid-Run does not change what the Run set out
+     * as. A Simulation Run keeps its place in History and its own page, and counts toward nothing —
+     * every query that feeds a count reads `isSimulationRun = 0` — and it is never AI-eligible.
+     * Rows from before v46 read false: nothing on them says they were simulated, and none is guessed.
+     */
+    val isSimulationRun: Boolean = false,
     /**
      * Whether this Run's Stage has been settled — the app's graduation rule asked of it, and the
      * coach asked after (#297). See [SessionRepository.settleStageForRun].
@@ -1067,7 +1116,8 @@ interface SessionDao {
     @Query(
         "SELECT id AS sessionId, startTime, ranAtUtcOffsetSeconds, durationSeconds, " +
             "movingTimeSeconds, distanceKm, isWalk FROM sessions " +
-            "WHERE ranAlongRouteId = :routeId AND endTime > 0 ORDER BY startTime DESC"
+            "WHERE ranAlongRouteId = :routeId AND endTime > 0 AND isSimulationRun = 0 " +
+            "ORDER BY startTime DESC"
     )
     fun getRunsAlongRouteFlow(routeId: Long): Flow<List<RouteRunRow>>
 
@@ -1096,7 +1146,8 @@ interface SessionDao {
      */
     @Query(
         "SELECT ranAlongRouteId AS routeId, MAX(startTime) AS lastRunStartTime FROM sessions " +
-            "WHERE ranAlongRouteId IN (:routeIds) AND endTime > 0 GROUP BY ranAlongRouteId"
+            "WHERE ranAlongRouteId IN (:routeIds) AND endTime > 0 AND isSimulationRun = 0 " +
+            "GROUP BY ranAlongRouteId"
     )
     suspend fun lastRunOnRoutes(routeIds: List<Long>): List<RouteLastRunRow>
 
@@ -1166,6 +1217,7 @@ interface SessionDao {
           AND distanceKm > 0
           AND durationSeconds > 120
           AND isWalk = 0
+          AND isSimulationRun = 0
         ORDER BY startTime DESC
         """
     )
@@ -1205,7 +1257,7 @@ interface SessionDao {
      * recorded has nothing to score, and will score itself when it finishes. Oldest first, so a
      * history being paid off in one pass is scored in the order it was run.
      */
-    @Query("SELECT id FROM sessions WHERE recordsScored = 0 AND endTime > 0 ORDER BY startTime ASC")
+    @Query(RUNS_OWING_RECORD_SCORING_SQL)
     suspend fun getSessionIdsMissingRecordScoring(): List<Long>
 
     /** Marks one Run as measured against the book — written only after its scoring has landed. */
@@ -1221,14 +1273,14 @@ interface SessionDao {
      * ever. This Run's own mark says the scoring of it is done; this says the scoring of everything
      * it is ranked against is.
      */
-    @Query("SELECT EXISTS(SELECT 1 FROM sessions WHERE recordsScored = 0 AND endTime > 0)")
+    @Query(ANY_RECORD_SCORING_OWED_SQL)
     fun anyRecordScoringOwedFlow(): Flow<Boolean>
 
     /**
      * Finished Runs nobody has put to the Segments yet (#70) — read the same way, and for the same
      * reasons, as [getSessionIdsMissingRecordScoring] above.
      */
-    @Query("SELECT id FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 ORDER BY startTime ASC")
+    @Query(RUNS_OWING_SEGMENT_TIMING_SQL)
     suspend fun getSessionIdsMissingSegmentTiming(): List<Long>
 
     /** Marks one Run as walked against the Segments — written only after that walk has landed. */
@@ -1244,7 +1296,7 @@ interface SessionDao {
      * for ever. This Run's own mark says the walk of it is done; this says the walk of everything it
      * is placed against is.
      */
-    @Query("SELECT EXISTS(SELECT 1 FROM sessions WHERE segmentsTimed = 0 AND endTime > 0)")
+    @Query(ANY_SEGMENT_TIMING_OWED_SQL)
     fun anySegmentTimingOwedFlow(): Flow<Boolean>
 
     /**
@@ -1416,6 +1468,7 @@ interface SessionDao {
         WHERE endTime > 0
           AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
+          AND isSimulationRun = 0
           AND ranUnderStageId = :stageId
         ORDER BY startTime DESC
         LIMIT 3
@@ -1450,6 +1503,7 @@ interface SessionDao {
         WHERE endTime > 0
           AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
+          AND isSimulationRun = 0
           AND ranUnderStageId = :stageId
           AND isRunWalkMode = 1
           AND isWalk = 0
@@ -1467,7 +1521,7 @@ interface SessionDao {
      * whose Stage may since have been graduated and whose Prescription is still standing; the
      * Prescription's own record of what it stood on is what narrows it from there.
      */
-    @Query("SELECT id FROM sessions WHERE id IN (:sessionIds) AND includeInAiTraining = 1")
+    @Query(AI_ELIGIBLE_IDS_IN_SQL)
     suspend fun getAiEligibleIdsIn(sessionIds: List<Long>): List<Long>
 
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
@@ -1509,6 +1563,7 @@ interface SessionDao {
                ranAtUtcOffsetSeconds FROM sessions
         WHERE endTime > 0
           AND isWalk = 0
+          AND isSimulationRun = 0
           AND ranUnderWorkoutId IN (:workoutIds)
         ORDER BY startTime DESC
         """
@@ -1531,6 +1586,7 @@ interface SessionDao {
         FROM sessions
         WHERE endTime > 0
           AND isWalk = 0
+          AND isSimulationRun = 0
           AND endTime >= :cutoffEpochMillis
         """
     )
@@ -1635,14 +1691,10 @@ interface SessionDao {
      *
      * A stream, so a Score arriving from the backfill redraws the curves under the runner rather than
      * waiting for the screen to be left and re-entered.
+     *
+     * A Simulation Run is left out (#560): its heart rate was made up, so its Score is no load.
      */
-    @Query(
-        """
-        SELECT startTime, effortScore, isWalk, ranAtUtcOffsetSeconds FROM sessions
-        WHERE endTime > 0 AND effortScore IS NOT NULL
-        ORDER BY startTime ASC
-        """
-    )
+    @Query(SCORED_RUNS_SQL)
     fun getScoredRunsFlow(): Flow<List<ScoredRunProjection>>
 
     /**
@@ -1655,15 +1707,10 @@ interface SessionDao {
      *
      * The whole history rather than the range showing, for the plainer reason this time — the
      * window is a filter over the weeks, so switching range is not another trip to the database.
+     *
+     * A Simulation Run is left out, as from [getScoredRunsFlow] (#560).
      */
-    @Query(
-        """
-        SELECT startTime, distanceKm, durationSeconds, movingTimeSeconds, effortScore,
-               ranAtUtcOffsetSeconds FROM sessions
-        WHERE endTime > 0
-        ORDER BY startTime ASC
-        """
-    )
+    @Query(RUN_VOLUMES_SQL)
     fun getRunVolumesFlow(): Flow<List<RunVolumeProjection>>
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
@@ -1819,7 +1866,7 @@ interface RunPauseDao {
         WalkMarkDebtRow::class,
         HistoryDebtRow::class
     ],
-    version = 45,
+    version = 46,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1939,7 +1986,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_41_42,
     MIGRATION_42_43,
     MIGRATION_43_44,
-    MIGRATION_44_45
+    MIGRATION_44_45,
+    MIGRATION_45_46
 )
 
 /**
@@ -2002,6 +2050,21 @@ const val ADD_ROUTE_FLIPPED_SQL = "ALTER TABLE routes ADD COLUMN flipped INTEGER
 val MIGRATION_44_45 = object : Migration(44, 45) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL(ADD_ROUTE_FLIPPED_SQL)
+    }
+}
+
+/**
+ * Adds the Simulation Run mark (#560) — see [RunnerSession.isSimulationRun].
+ *
+ * Every Run already kept comes through as a real one: nothing on a v45 row says Simulation was on,
+ * and guessing would take a real Run out of the counts. No row is read and none is rewritten.
+ */
+const val ADD_SIMULATION_RUN_SQL =
+    "ALTER TABLE sessions ADD COLUMN isSimulationRun INTEGER NOT NULL DEFAULT 0"
+
+val MIGRATION_45_46 = object : Migration(45, 46) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(ADD_SIMULATION_RUN_SQL)
     }
 }
 
