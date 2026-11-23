@@ -263,8 +263,9 @@ fun RunnerSession.mayHoldSegmentEfforts(): Boolean =
  * Whether two readings of the same Run would be worth the same at a Segment — everything the timing
  * decides by, and nothing else (#338, #343).
  *
- * The three things [mayHoldSegmentEfforts] asks that can change after a Run starts, because those are
- * the three that can turn a Run's efforts into no efforts or back: a Run finishing, being marked a Walk, becoming a treadmill Run.
+ * The three things [mayHoldSegmentEfforts] asks that can change after START, because those are the
+ * three that can turn a Run's efforts into no efforts or back: a Run finishing, being marked a Walk,
+ * becoming a treadmill Run.
  * A feel, a note or an Effort Score written while a track is being measured moves no waypoint and is
  * therefore no reason to throw a measurement away.
  *
