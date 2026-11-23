@@ -179,6 +179,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>A run recorded in Simulate mode now counts toward nothing.</strong> It still lands in History, with a small <strong>Test</strong> tag beside its date, and its own page shows the tag too. You can open it and delete it as normal. But it no longer moves Fitness, Fatigue or Form, the weekly totals or your goals, takes no records or best efforts, counts towards no stage, never appears on a route&rsquo;s or a segment&rsquo;s list of times, and the coach never sees it. Runs you did in Simulate mode before this change cannot be told apart, so they still count; delete them if you want them gone. See <em>Test runs</em> in <a href="#history">History</a>.</p>
       <p><strong>After a run, the app offers to post it to Garmin for you.</strong> The first time you open a run&rsquo;s page after the run, it asks <em>&ldquo;Post this run to Garmin?&rdquo;</em>. Tap <strong>Yes</strong> and Garmin Connect&rsquo;s import page opens inside the app. Tap its upload box and the run&rsquo;s file is already in it: no hunting through Downloads. You sign in to Garmin the first time, and the app keeps you signed in after that. Tap <strong>No</strong> and nothing happens; <strong>Send to Garmin</strong> in the share menu still works. A treadmill run waits until you have typed its distance, so the file Garmin gets has it. Each run asks only once. See <em>Posting the run to Garmin</em> in <a href="#history">History</a>.</p>
       <p><strong>The coach now tells you when the cool-down is over.</strong> When the cool-down runs out and the run ends by itself, the coach says <em>&ldquo;Cool down complete. Run finished.&rdquo;</em> out loud, so you are not left wondering whether it stopped. It stays quiet if you press Stop yourself or skip the cool-down, and a run with no plan has no cool-down to finish. See <em>When the app speaks, and when it doesn&rsquo;t</em> in <a href="#during">during a run</a>.</p>
       <p><strong>The floating coach&rsquo;s text is now bigger.</strong> Over other apps, your heart rate and the &ldquo;Walk in 00:45&rdquo; line are larger, so they are easier to read from the treadmill. The dial grew with them. Nothing else about the box changed. See <em>The floating coach, over Netflix</em> in <a href="#during">during the run</a>.</p>
@@ -393,7 +394,7 @@
 
       <div class="e">
         <h3>Simulate mode</h3>
-        <p>Runs the whole app on invented heart-rate data, so the screens and the coaching can be tried without strapping anything on. It records a real run in your history, so delete it afterwards.</p>
+        <p>Runs the whole app on invented heart-rate data, so the screens and the coaching can be tried without strapping anything on. The run it records stays in your history with a small <strong>Test</strong> tag and counts toward nothing &mdash; see <em>Test runs</em> in <a href="#history">History</a>.</p>
         <p class="note"><b>What it can't do.</b> There is no GPS in simulate mode — no distance, no map, no splits.</p>
         <div class="where"><b>Where</b> Home → Prefs</div>
       </div>
@@ -529,6 +530,14 @@
       <p class="sub">History is the last 20 runs, newest first. Everything on this page is about that list.</p>
     </div>
     <div class="entries">
+
+      <div class="e">
+        <h3>Test runs</h3>
+        <p>A run you started with <strong>Simulate mode</strong> on wears a small <strong>Test</strong> tag beside its date, here and on its own page. It stays in the list, and you can open it or delete it like any other run.</p>
+        <p>It counts toward nothing: not Fitness, Fatigue or Form, not the weekly totals or your goals, not records or best efforts, not a stage, and not a route&rsquo;s or a segment&rsquo;s list of times. The coach never sees it.</p>
+        <p class="note"><b>Only runs started in Simulate mode.</b> Turning Simulate on or off halfway through a run does not change what the run is. Runs from before this tag existed are all treated as real, because nothing on them says otherwise.</p>
+        <div class="where"><b>Where</b> Home &rarr; History</div>
+      </div>
 
       <div class="e">
         <h3>Narrowing the list to one kind of run</h3>
@@ -710,7 +719,7 @@
         <h3>What counts towards these numbers</h3>
         <ul class="plain">
           <li><strong>A run needs heart rate to count.</strong> A run that recorded no heart rate at all has no effort score, so it is left out of Fitness, Fatigue and Form altogether &mdash; not counted as a zero. It still fills the weekly bars and counts towards your goals.</li>
-          <li><strong>A Simulate mode run counts.</strong> It wears no strap, but it feeds the app heart rates just as a strap would, so it gets an effort score and moves the numbers like any other run.</li>
+          <li><strong>A Simulate mode run does not count.</strong> Its heart rates were made up, so it is left out of all three, the weekly bars and your goals. It stays in History with a <strong>Test</strong> tag &mdash; see <em>Test runs</em> in <a href="#history">History</a>.</li>
           <li><strong>A run counts on the day it started</strong>, by the clock where you set off. A run that crosses midnight belongs to the day you started it.</li>
           <li><strong>Some changes to an old run move nothing here.</strong> Changing how it felt, its note, or a treadmill run&rsquo;s stated distance leaves all three numbers as they were.</li>
           <li><strong>Some changes move the numbers since.</strong> Marking an old run a walk, or taking the mark off, moves every day from that run onwards &mdash; see <em>Marking an old run a walk changes the numbers since</em> in <a href="#after">after a run</a>. So can confirming your maximum on the Max HR card or stating your resting heart rate, because both work your past runs&rsquo; scores out again.</li>
@@ -1270,7 +1279,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>23 November 2026</strong>. The floating coach's heart rate and next-step line are now bigger, to read from the treadmill. After a run, the app now offers to post it to Garmin, with the file already in Garmin&rsquo;s upload box. The coach now says when the cool-down is over and the run has ended by itself. A floating coach can also sit over other apps during a run, so you can watch something full screen and still see your heart rate. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>23 November 2026</strong>. A run recorded in Simulate mode now stays in History with a Test tag and counts toward nothing. The floating coach's heart rate and next-step line are now bigger, to read from the treadmill. After a run, the app now offers to post it to Garmin, with the file already in Garmin&rsquo;s upload box. The coach now says when the cool-down is over and the run has ended by itself. A floating coach can also sit over other apps during a run, so you can watch something full screen and still see your heart rate. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
