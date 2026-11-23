@@ -120,6 +120,8 @@ sealed interface RunEffect {
         val targetZoneNumber: Int,
         val runModeSettingValue: String,
         val includeInAiTraining: Boolean,
+        /** Whether this is a Simulation Run — see `RunnerSession.isSimulationRun` (#560). */
+        val isSimulationRun: Boolean,
         /**
          * The Reserve this Run's zone seconds will be banded against, written with the row so the
          * Run remembers it (#228).

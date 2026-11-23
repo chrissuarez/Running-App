@@ -95,6 +95,11 @@ data class RunConfig(
     /** Whether this Run may be sent to the AI coach. Pinned, like everything else here. */
     val includeInAiTraining: Boolean,
     /**
+     * Whether Simulation was on as START was pressed — a Simulation Run (#560). Pinned with the rest,
+     * because Simulate can be toggled while START is still queued, and the Run is what it set out as.
+     */
+    val isSimulationRun: Boolean,
+    /**
      * The Stage this Run is being recorded under, or null for a Run with no plan attached (#234).
      *
      * Pinned at START like everything else here, and for the sharpest version of the reason: a
