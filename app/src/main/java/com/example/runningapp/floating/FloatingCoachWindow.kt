@@ -122,13 +122,13 @@ class FloatingCoachWindow(
     private fun build(): View {
         dial = DialView(context)
         bpmText = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, BPM_TEXT_SP)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
             includeFontPadding = false
         }
         nextText = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, NEXT_STEP_TEXT_SP)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER_HORIZONTAL
         }
@@ -276,8 +276,10 @@ class FloatingCoachWindow(
 
     private companion object {
         const val TAG = "FloatingCoach"
-        const val DIAL_WIDTH_DP = 112
-        const val DIAL_HEIGHT_DP = 64
+        const val DIAL_WIDTH_DP = 134
+        const val DIAL_HEIGHT_DP = 77
+        const val BPM_TEXT_SP = 36f
+        const val NEXT_STEP_TEXT_SP = 17f
         // Black at about 55%: dark enough to read white on, light enough to see the film through.
         const val BACKGROUND = 0x8C000000.toInt()
     }
