@@ -562,7 +562,14 @@ fun SummaryStats(
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-            Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
+                // The same tag the History row carries (#560): this Run counts toward nothing.
+                if (session.isSimulationRun) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    SimulationRunMarker()
+                }
+            }
             if (session.weatherTempC != null) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
