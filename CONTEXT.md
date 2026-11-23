@@ -770,7 +770,8 @@ _Avoid_: AI adjustments, AI intervals
 **Ceiling**:
 The most total time the next Run's Prescription may come to: 110% of the longest Run in the last
 30 days, warm-up and cool-down included. None with no recent history. The coach is told it in the
-briefing, and the app trims any Prescription over it.
+briefing, and the app trims any Prescription over it, except that the Workout floor
+outranks it, and the briefing tells the coach so.
 _Avoid_: cap, limit
 
 **Strap**:

@@ -568,6 +568,19 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `with a ceiling the coach is told the floor wins over it`() {
+        val prompt = promptFor(
+            oneRunWalkSession.copy(
+                stageWorkout = longRunWorkout,
+                ceilingSeconds = 100L
+            )
+        )
+
+        assertTrue(prompt.contains("the floor wins over the ceiling"))
+        assertTrue(prompt.contains("never describe a shortened run"))
+    }
+
+    @Test
     fun `with no ceiling the prompt says nothing of a ceiling or the envelope`() {
         val prompt = promptFor(
             oneRunWalkSession.copy(
@@ -577,6 +590,7 @@ class AiCoachClientTest {
         )
 
         assertFalse(prompt.contains("may last at most"))
+        assertFalse(prompt.contains("the floor wins over the ceiling"))
         assertFalse(prompt.contains("warm-up is"))
         assertFalse(prompt.contains("300s"))
         assertFalse(prompt.contains("240s"))
